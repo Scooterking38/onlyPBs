@@ -1,7 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "onlypbs",
-  "main": ".open-next/worker.js",
   "pages_build_output_dir": ".open-next/assets",
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
