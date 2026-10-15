@@ -2,13 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "onlypbs",
   "main": ".open-next/worker.js",
+  "pages_build_output_dir": ".open-next/assets",
   "compatibility_date": "2026-03-01",
   "compatibility_flags": ["nodejs_compat"],
-  "assets": {
-    "directory": ".open-next/assets",
-    "binding": "ASSETS"
-  },
-  // Add this section for your database
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE",
@@ -16,22 +12,6 @@
     }
   ],
   "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1,
-    "redact_query_string": false,
-    "logs": {
-      "enabled": true,
-      "head_sampling_rate": 1,
-      "invocation_logs": true,
-      "persist": true
-    },
-    "traces": {
-      "enabled": true,
-      "head_sampling_rate": 1,
-      "persist": true
-    },
-    "issues": {
-      "enabled": true
-    }
+    "enabled": true
   }
 }
