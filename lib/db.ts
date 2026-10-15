@@ -1,15 +1,14 @@
 // lib/db.ts
 import { neon, NeonQueryFunction } from '@neondatabase/serverless';
 
-let _sql: NeonQueryFunction<false, false> | null = null;
-
 export const sql = ((strings: TemplateStringsArray, ...values: any[]) => {
-    if (!_sql) {
-        const connectionString = process.env.DATABASE_URL;
-        if (!connectionString) {
-            throw new Error("DATABASE_URL is missing in environment variables.");
-        }
-        _sql = neon(connectionString);
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+        throw new Error("DATABASE_URL is missing in environment variables.");
     }
-    return _sql(strings, ...values);
+
+    // Create a fresh HTTP fetch client for this specific query
+    // to prevent hanging promises across Cloudflare worker isolate freezes
+    const client = neon(connectionString);
+    return client(strings, ...values);
 }) as unknown as NeonQueryFunction<false, false>;
