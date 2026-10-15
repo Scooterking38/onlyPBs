@@ -1,0 +1,125 @@
+/* app/globals.css */
+@import "tailwindcss";
+
+/* If running Tailwind v3, these fallback gracefully: */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =============================================================================
+   PRECISION OBSIDIAN & TITANIUM HARDWARE DESIGN SYSTEM
+   ============================================================================= */
+:root {
+  --canvas: #08090C;
+  --slab-bg: #101218;
+  --slab-border: rgba(255, 255, 255, 0.08);
+  --slab-border-hover: rgba(255, 255, 255, 0.18);
+  --gold-accent: #E2A73B;
+  --text-primary: #EDEDED;
+  --text-muted: #7E8494;
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(circle at 50% 0%, #151722 0%, #08090C 75%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+/* Tabular monospace for numbers */
+.num-font {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* Machined Dual-Gradient Border Tile */
+.titanium-slab {
+  background: linear-gradient(#12131A, #0F1015) padding-box,
+  linear-gradient(145deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.02) 50%, rgba(255, 255, 255, 0.08) 100%) border-box;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.titanium-slab:hover {
+  background: linear-gradient(#14161F, #111218) padding-box,
+  linear-gradient(145deg, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0.04) 50%, rgba(255, 255, 255, 0.14) 100%) border-box;
+}
+
+/* Recessed Control Tray */
+.recessed-tray {
+  background: #0B0C10;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.6);
+  border-radius: 8px;
+}
+
+/* Metallic Badges */
+.pill-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pill-gold {
+  background: rgba(226, 167, 59, 0.12);
+  color: #E2A73B;
+  border: 1px solid rgba(226, 167, 59, 0.3);
+}
+
+.pill-slate {
+  background: rgba(255, 255, 255, 0.04);
+  color: #8A90A2;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.pill-verified {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+/* Buttons */
+.btn-action {
+  background: #181922;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #D1D5DB;
+  font-weight: 600;
+  font-size: 0.8rem;
+  padding: 6px 14px;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+
+.btn-action:hover {
+  background: #20222E;
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #FFFFFF;
+}
+
+.btn-primary {
+  background: #EDEDED;
+  color: #0A0B0E;
+  font-weight: 700;
+  border: 1px solid #FFFFFF;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-primary:hover {
+  background: #FFFFFF;
+  transform: translateY(-1px);
+}
