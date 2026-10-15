@@ -1,59 +1,100 @@
-// app/api/profile/route.ts
-
-
 import { NextResponse } from 'next/server';
-import { sql } from '@/lib/db';
+import { query } from '@/lib/db';
 
 export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
-    const email = searchParams.get('email');
-    if (!email) return NextResponse.json({ error: "Email required" }, { status: 400 });
+    const emailParam = searchParams.get('email');
 
-    // Auto-migration to ensure avatar_url column exists
-    await sql`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '';`;
-
-    const rows = await sql`SELECT * FROM athletes WHERE email = ${email.toLowerCase().trim()} LIMIT 1;`;
-    if (rows.length === 0) {
-        // Auto-create default profile if doesn't exist
-        const defaultName = email.split('@')[0];
-        await sql`
-      INSERT INTO athletes (email, display_name, bodyweight_kg, avatar_icon, avatar_url)
-      VALUES (${email.toLowerCase().trim()}, ${defaultName}, 75.0, '⚡', '')
-      ON CONFLICT (email) DO NOTHING;
-    `;
-        return NextResponse.json({
-            email,
-            display_name: defaultName,
-            bodyweight_kg: 75.0,
-            tagline: 'Gravity is just a suggestion.',
-            discipline: 'Statics & Holds',
-            avatar_icon: '⚡',
-            avatar_url: '',
-            is_masked: false
-        });
+    if (!emailParam) {
+        return NextResponse.json({ error: "Email parameter is required" }, { status: 400 });
     }
 
-    return NextResponse.json(rows[0]);
+    const email = emailParam.toLowerCase().trim();
+
+    try {
+        // 1. Fetch the profile
+        const rows = await query`
+      SELECT email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked 
+      FROM athletes 
+      WHERE email = ${email} 
+      LIMIT 1
+    `;
+
+        if (rows.length === 0) {
+            // 2. Auto-create default profile using UPSERT logic
+            const defaultName = email.split('@')[0];
+
+            await query`
+        INSERT INTO athletes (
+          email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked
+        )
+        VALUES (
+          ${email}, ${defaultName}, 75.0, 'Gravity is just a suggestion.', 'Statics & Holds', '⚡', '', false
+        )
+        ON CONFLICT (email) DO NOTHING;
+      `;
+
+            // Return the default object immediately so the UI doesn't flicker
+            return NextResponse.json({
+                email,
+                display_name: defaultName,
+                bodyweight_kg: 75.0,
+                tagline: 'Gravity is just a suggestion.',
+                discipline: 'Statics & Holds',
+                avatar_icon: '⚡',
+                avatar_url: '',
+                is_masked: false
+            });
+        }
+
+        return NextResponse.json(rows[0]);
+
+    } catch (err) {
+        console.error("Profile GET error:", err);
+        return NextResponse.json({ error: "Failed to load profile" }, { status: 500 });
+    }
 }
 
 export async function POST(req: Request) {
-    const body = await req.json();
-    const { email, displayName, bodyweight, tagline, discipline, avatarIcon, avatarUrl, isMasked } = body;
+    try {
+        const body = await req.json();
+        const { email, displayName, bodyweight, tagline, discipline, avatarIcon, avatarUrl, isMasked } = body;
 
-    await sql`ALTER TABLE athletes ADD COLUMN IF NOT EXISTS avatar_url TEXT DEFAULT '';`;
+        if (!email) {
+            return NextResponse.json({ error: "Email is required for update" }, { status: 400 });
+        }
 
-    await sql`
-    INSERT INTO athletes (email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked)
-    VALUES (${email.toLowerCase().trim()}, ${displayName}, ${bodyweight}, ${tagline || ''}, ${discipline || 'Statics & Holds'}, ${avatarIcon || '⚡'}, ${avatarUrl || ''}, ${isMasked || false})
-    ON CONFLICT (email) DO UPDATE SET
-      display_name = EXCLUDED.display_name,
-      bodyweight_kg = EXCLUDED.bodyweight_kg,
-      tagline = EXCLUDED.tagline,
-      discipline = EXCLUDED.discipline,
-      avatar_icon = EXCLUDED.avatar_icon,
-      avatar_url = EXCLUDED.avatar_url,
-      is_masked = EXCLUDED.is_masked;
-  `;
+        const cleanEmail = email.toLowerCase().trim();
 
-    return NextResponse.json({ success: true });
+        // Use UPSERT (ON CONFLICT) to handle both new and existing users
+        await query`
+      INSERT INTO athletes (
+        email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked
+      )
+      VALUES (
+        ${cleanEmail}, 
+        ${displayName || 'User'}, 
+        ${bodyweight || 75.0}, 
+        ${tagline || ''}, 
+        ${discipline || 'Statics & Holds'}, 
+        ${avatarIcon || '⚡'}, 
+        ${avatarUrl || ''}, 
+        ${isMasked ?? false}
+      )
+      ON CONFLICT (email) DO UPDATE SET
+        display_name = EXCLUDED.display_name,
+        bodyweight_kg = EXCLUDED.bodyweight_kg,
+        tagline = EXCLUDED.tagline,
+        discipline = EXCLUDED.discipline,
+        avatar_icon = EXCLUDED.avatar_icon,
+        avatar_url = EXCLUDED.avatar_url,
+        is_masked = EXCLUDED.is_masked;
+    `;
+
+        return NextResponse.json({ success: true });
+
+    } catch (err) {
+        console.error("Profile POST error:", err);
+        return NextResponse.json({ error: "Failed to update profile" }, { status: 500 });
+    }
 }

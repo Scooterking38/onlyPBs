@@ -8,6 +8,13 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  // Add this section for your database
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "61b07aa748584bb0bd927577214b1ad5"
+    }
+  ],
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1,
