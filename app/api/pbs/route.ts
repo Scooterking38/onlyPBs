@@ -29,8 +29,39 @@ export async function POST(req: Request) {
         await db`UPDATE athletes SET bodyweight_kg = ${bw} WHERE email = ${cleanEmail}`;
 
         return NextResponse.json({ success: true });
-    } catch (err: any) {
+    } catch (err) {
         console.error("PBS POST Error:", err);
-        return NextResponse.json({ error: err.message || "Failed to record PB" }, { status: 400 });
+        const message = err instanceof Error ? err.message : "Failed to record PB";
+        return NextResponse.json({ error: message }, { status: 400 });
+    }
+}
+
+export async function GET(req: Request) {
+    try {
+        const { searchParams } = new URL(req.url);
+        const email = searchParams.get('email');
+
+        const db = await getClient();
+
+        if (email) {
+            const cleanEmail = email.toLowerCase().trim();
+            const rows = await db`
+                SELECT id, email, skill_id, weight, reps, duration, proof_url, is_verified, verification_status, date, bodyweight_at_time, is_public_proof
+                FROM pbs
+                WHERE email = ${cleanEmail}
+            `;
+            return NextResponse.json(rows);
+        } else {
+            const rows = await db`
+                SELECT p.*, a.display_name, a.avatar_url, a.avatar_icon, a.is_masked
+                FROM pbs p
+                LEFT JOIN athletes a ON p.email = a.email
+            `;
+            return NextResponse.json(rows);
+        }
+    } catch (err) {
+        console.error("PBS GET Error:", err);
+        const message = err instanceof Error ? err.message : "Failed to fetch PBs";
+        return NextResponse.json({ error: message }, { status: 500 });
     }
 }

@@ -17,12 +17,21 @@ interface AthleteProfile {
   is_masked: boolean;
 }
 
+interface PBWithAthlete extends PBRecord {
+  display_name?: string;
+  avatar_url?: string;
+  avatar_icon?: string;
+  is_masked?: boolean;
+  bodyweight_at_time?: number;
+  verification_status?: string;
+}
+
 export default function CallilogApp() {
   const [userEmail] = useState("mrwe3838@gmail.com"); // Auth user
   const [activeTab, setActiveTab] = useState<"vault" | "intel" | "arena" | "admin">("vault");
   const [selectedBranch, setSelectedBranch] = useState<string>("Pull");
   const [myPbs, setMyPbs] = useState<PBRecord[]>([]);
-  const [allPbs, setAllPbs] = useState<any[]>([]);
+  const [allPbs, setAllPbs] = useState<PBWithAthlete[]>([]);
 
   // Profile state
   const [profile, setProfile] = useState<AthleteProfile>({
@@ -1060,6 +1069,18 @@ export default function CallilogApp() {
                         onChange={(e) => setProofUrl(e.target.value)}
                         style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
                     />
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <input
+                        type="checkbox"
+                        id="is_public_cb"
+                        checked={isPublic}
+                        onChange={(e) => setIsPublic(e.target.checked)}
+                    />
+                    <label htmlFor="is_public_cb" style={{ fontSize: "0.75rem", color: "#8A90A2", cursor: "pointer" }}>
+                      Public benchmark & proof
+                    </label>
                   </div>
 
                   <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
