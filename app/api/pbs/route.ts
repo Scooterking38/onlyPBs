@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getClient } from '@/lib/db';
+import { reconcileVerification } from '@/lib/verification';
 
 export const maxDuration = 60;
 
@@ -39,6 +40,9 @@ export async function POST(req: Request) {
 
         await db`UPDATE athletes SET bodyweight_kg = ${bw} WHERE email = ${cleanEmail}`;
 
+        // Repair any verification state made stale by earlier code versions.
+        await reconcileVerification();
+
         return NextResponse.json({ success: true, replaced: existing.length > 0 });
     } catch (err) {
         console.error("PBS POST Error:", err);
@@ -52,6 +56,10 @@ export async function GET(req: Request) {
         const { searchParams } = new URL(req.url);
         const email = searchParams.get('email');
         const db = await getClient();
+
+        // Reads also reconcile old records, so deployments heal without needing
+        // the original verification action to be repeated.
+        await reconcileVerification();
 
         if (email) {
             const cleanEmail = email.toLowerCase().trim();
