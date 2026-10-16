@@ -123,3 +123,125 @@ body {
   background: #FFFFFF;
   transform: translateY(-1px);
 }
+
+/* Responsive polish and consistent interaction states */
+:root {
+  color-scheme: dark;
+  --surface-raised: rgba(21, 23, 33, 0.88);
+  --accent-soft: rgba(226, 167, 59, 0.12);
+  --focus-ring: rgba(167, 139, 250, 0.7);
+}
+
+html {
+  scroll-behavior: smooth;
+  scrollbar-color: #393b49 #090a0e;
+}
+
+body {
+  line-height: 1.5;
+  background-image:
+    radial-gradient(ellipse at 12% -8%, rgba(124, 58, 237, 0.11), transparent 38rem),
+    radial-gradient(ellipse at 88% 0%, rgba(226, 167, 59, 0.08), transparent 34rem),
+    linear-gradient(180deg, #0b0c12 0%, #08090c 55%, #0a0b10 100%);
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+input, select, textarea {
+  max-width: 100%;
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+input:not([type="checkbox"]):focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(167, 139, 250, 0.72) !important;
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12);
+}
+
+.titanium-slab {
+  backdrop-filter: blur(14px);
+  border-radius: 14px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.24), inset 0 1px rgba(255,255,255,0.025);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+.titanium-slab:hover {
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.3), inset 0 1px rgba(255,255,255,0.035);
+}
+
+.recessed-tray {
+  backdrop-filter: blur(12px);
+  border-radius: 10px;
+}
+
+.pill-badge {
+  border-radius: 999px;
+  padding: 4px 9px;
+  line-height: 1.2;
+}
+
+.btn-action, .btn-primary {
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+.btn-primary {
+  box-shadow: 0 3px 12px rgba(226, 167, 59, 0.08);
+}
+
+.btn-primary:active, .btn-action:active {
+  transform: translateY(1px);
+}
+
+img {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  body {
+    background-attachment: scroll;
+  }
+
+  .titanium-slab {
+    border-radius: 11px;
+  }
+
+  .recessed-tray {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .recessed-tray::-webkit-scrollbar {
+    display: none;
+  }
+
+  button, input, select, textarea {
+    touch-action: manipulation;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
