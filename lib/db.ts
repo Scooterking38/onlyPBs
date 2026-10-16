@@ -470,12 +470,17 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [] as unknown as T[];
   }
 
-  // 10. SELECT ... FROM pbs WHERE email = ...
+  // 10. SELECT ... FROM pbs WHERE email = ... (optionally scoped to a skill)
   if (/SELECT.*FROM\s+pbs\s+WHERE\s+email\s*=/i.test(norm)) {
     const email = String(values[0] || "").toLowerCase().trim();
+    const hasSkillFilter = /skill_id\s*=/i.test(norm);
+    const skillId = hasSkillFilter ? String(values[1] || "") : "";
     const list = memoryStore.pbs
-      .filter((p) => p.email.toLowerCase() === email)
+      .filter((p) => p.email.toLowerCase() === email && (!hasSkillFilter || p.skill_id === skillId))
       .sort((a, b) => b.id - a.id);
+    if (/SELECT\s+id\s+FROM\s+pbs/i.test(norm)) {
+      return list.map((p) => ({ id: p.id })) as unknown as T[];
+    }
     return list as unknown as T[];
   }
 
