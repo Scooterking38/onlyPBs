@@ -22,14 +22,13 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: "Athlete not found" }, { status: 404 });
         }
 
-        // A skill has one current record per athlete. Replace every existing entry
-        // for this athlete + skill instead of comparing scores and keeping the old one.
-        // This deliberately allows lower values so a typo can be corrected.
+        // Replace all existing records for this athlete + skill, regardless of score.
+        // This intentionally allows lower values so mistakes can be corrected.
         const existing = await db`
-            SELECT id, skill_id FROM pbs WHERE email = ${cleanEmail}
+            SELECT id FROM pbs
+            WHERE email = ${cleanEmail} AND skill_id = ${skillId}
         `;
-        const matching = existing.filter((row: { id: number; skill_id: string }) => row.skill_id === skillId);
-        for (const row of matching) {
+        for (const row of existing) {
             await db`DELETE FROM pbs WHERE id = ${row.id}`;
         }
 
@@ -40,7 +39,7 @@ export async function POST(req: Request) {
 
         await db`UPDATE athletes SET bodyweight_kg = ${bw} WHERE email = ${cleanEmail}`;
 
-        return NextResponse.json({ success: true, replaced: matching.length > 0 });
+        return NextResponse.json({ success: true, replaced: existing.length > 0 });
     } catch (err) {
         console.error("PBS POST Error:", err);
         const message = err instanceof Error ? err.message : "Failed to record PB";
