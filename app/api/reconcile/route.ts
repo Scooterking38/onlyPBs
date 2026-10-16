@@ -20,7 +20,9 @@ export async function GET(req: Request) {
         return NextResponse.json({
             success: true,
             reconciledAt: new Date().toISOString(),
-            verified: result.verified
+            verified: result.verified,
+            duplicatesRemoved: result.duplicatesRemoved,
+            invalidRemoved: result.invalidRemoved
         });
     } catch (error) {
         console.error("Verification reconciliation failed:", error);
