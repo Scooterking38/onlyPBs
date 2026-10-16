@@ -11,15 +11,15 @@ function getSqlClient(): Sql {
     }
 
     sql = postgres(connectionString, {
-      max: 10,
+      max: 1,                // ← CRITICAL for serverless
       idle_timeout: 20,
       connect_timeout: 10,
+      prepare: false,        // ← CRITICAL for Supabase/Neon pooler
     });
   }
   return sql;
 }
 
-// Helper for simple queries
 export async function query<T = any>(
   strings: TemplateStringsArray,
   ...values: any[]
@@ -28,7 +28,6 @@ export async function query<T = any>(
   return await client(strings, ...values) as unknown as T[];
 }
 
-// Export the client getter for transactions
 export async function getClient() {
   return getSqlClient();
 }
