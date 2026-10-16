@@ -1,0 +1,11 @@
+{
+  "name": "OnlyPBs — Calisthenics PB Tracker",
+  "short_name": "OnlyPBs",
+  "description": "Track your calisthenics personal bests and progress over time.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a"
+}
