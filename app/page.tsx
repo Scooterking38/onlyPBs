@@ -90,13 +90,28 @@ export default function CallilogApp() {
 
   const fetchPbs = async () => {
     try {
-      const res = await fetch(`/api/pbs?email=${encodeURIComponent(userEmail)}`);
-      if (res.ok) setMyPbs(await res.json());
+      // One fresh server snapshot per refresh. The /api/pbs GET handler runs
+      // reconciliation before returning, so the snapshot already reflects any
+      // cleanup/verification repairs. Never expose database credentials or run
+      // database mutations directly in the browser.
+      const res = await fetch("/api/pbs", { cache: "no-store" });
+      if (!res.ok) throw new Error("Failed to fetch PB records");
 
-      const allRes = await fetch("/api/pbs");
-      if (allRes.ok) setAllPbs(await allRes.json());
+      const snapshot: PBWithAthlete[] = await res.json();
+      setAllPbs(snapshot);
+      setMyPbs(
+        snapshot
+          .filter((pb) => String(pb.email || "").toLowerCase() === userEmail.toLowerCase())
+          .map((pb) => ({
+            ...pb,
+            weight: Number(pb.weight) || 0,
+            reps: Number(pb.reps) || 0,
+            duration: Number(pb.duration) || 0,
+            is_verified: Boolean(pb.is_verified),
+          }))
+      );
     } catch (err) {
-      console.error("Failed to load records", err);
+      console.error("Failed to load and reconcile records", err);
     }
   };
 
