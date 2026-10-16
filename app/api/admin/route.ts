@@ -1,13 +1,6 @@
 import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { SKILL_MAP } from '@/lib/skills';
-import { scoreSinglePB, type PBRecord } from '@/lib/elo';
-
-type StoredPB = PBRecord & {
-    id: number;
-    bodyweight_at_time?: number;
-    verification_status?: string;
-};
+import { reconcileVerification } from '@/lib/verification';
 
 export async function POST(req: Request) {
     try {
@@ -33,42 +26,17 @@ export async function POST(req: Request) {
                 WHERE id = ${pbId}
             `;
 
-            // Only approvals cascade. A verified record verifies same-athlete
-            // records in the same skill category whose score is <= the approved PB.
-            let cascaded = 0;
-            if (approved) {
-                const selectedRows = await query`
-                    SELECT id, email, skill_id, weight, reps, duration, bodyweight_at_time, is_verified, verification_status, date
-                    FROM pbs
-                ` as StoredPB[];
-                const target = selectedRows.find((p) => Number(p.id) === Number(pbId));
-                const targetSkill = target ? SKILL_MAP.get(target.skill_id) : undefined;
+            // Reconcile all records, not just records related to this action.
+            // This also repairs PBs submitted before this logic was deployed.
+            const reconciliation = approved
+                ? await reconcileVerification()
+                : { verified: 0 };
 
-                if (target && targetSkill) {
-                    const targetScore = scoreSinglePB(target, Number(target.bodyweight_at_time) || 75);
-                    for (const candidate of selectedRows) {
-                        if (Number(candidate.id) === Number(target.id) ||
-                            candidate.email?.toLowerCase() !== target.email?.toLowerCase()) continue;
-
-                        const candidateSkill = SKILL_MAP.get(candidate.skill_id);
-                        if (!candidateSkill || candidateSkill.category !== targetSkill.category) continue;
-
-                        const candidateScore = scoreSinglePB(candidate, Number(candidate.bodyweight_at_time) || 75);
-                        if (candidateScore <= targetScore && !candidate.is_verified) {
-                            await query`
-                                UPDATE pbs
-                                SET is_verified = ${true},
-                                    verification_status = ${"verified"},
-                                    rejection_reason = ${""}
-                                WHERE id = ${candidate.id}
-                            `;
-                            cascaded++;
-                        }
-                    }
-                }
-            }
-
-            return NextResponse.json({ success: true, data: result, cascaded });
+            return NextResponse.json({
+                success: true,
+                data: result,
+                reconciled: reconciliation.verified
+            });
         } else if (action === "mask") {
             if (!email || typeof isMasked !== 'boolean') {
                 throw new Error("Email and isMasked boolean are required");
@@ -81,6 +49,7 @@ export async function POST(req: Request) {
         } else if (action === "delete_pb") {
             if (!pbId) throw new Error("pbId is required for deletion");
             result = await query`DELETE FROM pbs WHERE id = ${pbId}`;
+            await reconcileVerification();
         }
 
         return NextResponse.json({ success: true, data: result });
