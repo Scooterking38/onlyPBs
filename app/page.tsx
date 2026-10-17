@@ -269,7 +269,7 @@ export default function CallilogApp() {
   }, [diagnostics.radarAxes]);
 
   return (
-      <div style={{ maxWidth: "880px", margin: "0 auto", padding: "16px" }}>
+      <main className="app-shell">
         {/* ===================================================================
           1. TOP HUD (AVATAR + PROFILE TRIGGER + DUAL ELO)
           =================================================================== */}
@@ -279,7 +279,11 @@ export default function CallilogApp() {
               {/* Clickable Avatar */}
               <div
                   onClick={() => setShowProfileModal(true)}
-                  title="Click to edit profile"
+                  title="Edit profile"
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Edit athlete profile"
+                  onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setShowProfileModal(true); } }}
                   style={{ cursor: "pointer", position: "relative" }}
               >
                 {renderAvatar(profile.avatar_url, profile.avatar_icon, 52)}
@@ -353,7 +357,8 @@ export default function CallilogApp() {
           <input
               ref={searchInputRef}
               type="text"
-              placeholder="Search 50+ movements across all branches... (Cmd + K)"
+              aria-label="Search movements"
+              placeholder="Search movements across all branches…  (Ctrl/⌘ K)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{
@@ -390,10 +395,12 @@ export default function CallilogApp() {
         {/* ===================================================================
           3. MASTER NAVIGATION
           =================================================================== */}
-        <nav className="recessed-tray" style={{ display: "flex", padding: "4px", gap: "4px", marginBottom: "16px" }}>
+        <nav aria-label="Main sections" className="recessed-tray app-navigation" style={{ display: "flex", padding: "4px", gap: "4px", marginBottom: "16px" }}>
           {(["vault", "intel", "arena", "admin"] as const).map((tab) => (
               <button
                   key={tab}
+                  type="button"
+                  aria-pressed={activeTab === tab}
                   onClick={() => setActiveTab(tab)}
                   style={{
                     flex: 1,
@@ -1110,6 +1117,6 @@ export default function CallilogApp() {
               </div>
             </div>
         )}
-      </div>
+      </main>
   );
 }
