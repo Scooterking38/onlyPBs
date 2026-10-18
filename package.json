@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "eslint app lib",
-    "build:ios-frontend": "vite build --config vite.config.ts"
+    "build:pwa": "vite build --config vite.config.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",
