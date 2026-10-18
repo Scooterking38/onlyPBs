@@ -6,19 +6,33 @@ workflows:
     environment:
       node: 22
       xcode: latest
+      cocoapods: default
     scripts:
       - name: Install dependencies
         script: npm ci
+
       - name: Build frontend and sync Capacitor
         script: npm run cap:sync
-      - name: Build iOS app
+
+      - name: Install CocoaPods dependencies if needed
         script: |
-          xcode-project build \
-            --project ios/App/App.xcodeproj \
-            --scheme App \
-            --configuration Release \
-            --sdk iphoneos \
-            --destination 'generic/platform=iOS' \
+          if [ -f ios/App/Podfile ]; then
+            cd ios/App
+            pod install
+          fi
+
+      - name: Build unsigned iOS app
+        script: |
+          xcodebuild build \
+            -project "$CM_BUILD_DIR/ios/App/App.xcodeproj" \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
+
     artifacts:
-      - /Users/builder/clone/ios/App/build/Build/Products/Release-iphoneos/*.app
+      - $HOME/Library/Developer/Xcode/DerivedData/**/Build/**/*.app
+      - /tmp/xcodebuild_logs/*.log
