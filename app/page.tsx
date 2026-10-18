@@ -4,12 +4,14 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { auth, login, logout } from "@/lib/firebase";
+import { apiFetch, apiUrl } from "@/lib/api";
 import { SKILLS, SkillNode, TIER_CONFIG, getNextStepSkill } from "@/lib/skills";
 import { PBRecord, computeDualELO, getRankBadge, scoreSinglePB } from "@/lib/elo";
 import { computeDiagnostics } from "@/lib/analytics";
 import { computeCalisthenics1RM, getYouTubeEmbedUrl, exportFighterCardAsPng } from "@/lib/upgrades";
 
 interface AthleteProfile {
+    id?: number;
     email: string;
     display_name: string;
     bodyweight_kg: number;
@@ -21,6 +23,7 @@ interface AthleteProfile {
 }
 
 interface PBWithAthlete extends PBRecord {
+    athlete_id?: number;
     display_name?: string;
     avatar_url?: string;
     avatar_icon?: string;
@@ -40,6 +43,8 @@ export default function CallilogApp() {
     const [selectedBranch, setSelectedBranch] = useState<string>("Pull");
     const [myPbs, setMyPbs] = useState<PBRecord[]>([]);
     const [allPbs, setAllPbs] = useState<PBWithAthlete[]>([]);
+    const [adminPbs, setAdminPbs] = useState<PBWithAthlete[]>([]);
+    const [isAdmin, setIsAdmin] = useState(false);
 
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
@@ -92,7 +97,7 @@ export default function CallilogApp() {
     const fetchProfile = async () => {
         if (!userEmail) return;
         try {
-            const res = await fetch(`/api/profile?email=${encodeURIComponent(userEmail)}`);
+            const res = await apiFetch(apiUrl("/api/profile"));
             if (res.ok) {
                 const data = await res.json();
                 setProfile(data);
@@ -120,24 +125,22 @@ export default function CallilogApp() {
 
     const fetchPbs = async () => {
         try {
-            const res = await fetch("/api/pbs", { cache: "no-store" });
-            if (!res.ok) throw new Error("Failed to fetch PB records");
-
-            const snapshot: PBWithAthlete[] = await res.json();
-            setAllPbs(snapshot);
+            const publicResponse = await apiFetch(apiUrl("/api/pbs"), { cache: "no-store" });
+            if (!publicResponse.ok) throw new Error("Failed to fetch public PB records");
+            const publicRows: PBWithAthlete[] = await publicResponse.json();
+            setAllPbs(publicRows);
 
             if (userEmail) {
-                setMyPbs(
-                    snapshot
-                        .filter((pb) => String(pb.email || "").toLowerCase() === userEmail.toLowerCase())
-                        .map((pb) => ({
-                            ...pb,
-                            weight: Number(pb.weight) || 0,
-                            reps: Number(pb.reps) || 0,
-                            duration: Number(pb.duration) || 0,
-                            is_verified: Boolean(pb.is_verified),
-                        }))
-                );
+                const mineResponse = await apiFetch(apiUrl("/api/pbs?mine=true"), { cache: "no-store" });
+                if (!mineResponse.ok) throw new Error("Failed to fetch personal PB records");
+                const mineRows: PBRecord[] = await mineResponse.json();
+                setMyPbs(mineRows.map((pb) => ({
+                    ...pb,
+                    weight: Number(pb.weight) || 0,
+                    reps: Number(pb.reps) || 0,
+                    duration: Number(pb.duration) || 0,
+                    is_verified: Boolean(pb.is_verified),
+                })));
             } else {
                 setMyPbs([]);
             }
@@ -146,12 +149,39 @@ export default function CallilogApp() {
         }
     };
 
+    const fetchAdminPbs = async () => {
+        if (!userEmail) {
+            setIsAdmin(false);
+            setAdminPbs([]);
+            return;
+        }
+
+        try {
+            const response = await apiFetch(apiUrl("/api/admin"), { cache: "no-store" });
+            if (!response.ok) {
+                setIsAdmin(false);
+                setAdminPbs([]);
+                return;
+            }
+
+            const data = await response.json();
+            setIsAdmin(data.isAdmin === true);
+            setAdminPbs(Array.isArray(data.pending) ? data.pending : []);
+        } catch (error) {
+            console.error("Failed to load admin queue", error);
+            setIsAdmin(false);
+            setAdminPbs([]);
+        }
+    };
+
     useEffect(() => {
         if (userEmail) {
             fetchProfile();
             fetchPbs();
+            fetchAdminPbs();
         } else {
             fetchPbs();
+            fetchAdminPbs();
         }
     }, [userEmail]);
 
@@ -208,7 +238,7 @@ export default function CallilogApp() {
         e.preventDefault();
         if (!activeModalSkill || !userEmail) return;
 
-        await fetch("/api/pbs", {
+        await apiFetch(apiUrl("/api/pbs"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -231,7 +261,7 @@ export default function CallilogApp() {
         e.preventDefault();
         if (!userEmail) return;
 
-        await fetch("/api/profile", {
+        await apiFetch(apiUrl("/api/profile"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -571,7 +601,7 @@ export default function CallilogApp() {
                                         <div style={{ display: "flex", gap: "8px" }}>
                                             {peak?.proof_url && (
                                                 <button
-                                                    onClick={() => setPreviewVideoUrl(peak.proof_url)}
+                                                    onClick={() => setPreviewVideoUrl(peak.proof_url ?? null)}
                                                     className="btn-action"
                                                     style={{ padding: "6px 10px", fontSize: "0.75rem", borderColor: "#E2A73B", color: "#E2A73B" }}
                                                 >
@@ -696,6 +726,7 @@ export default function CallilogApp() {
                     string,
                     {
                         email: string;
+                        athleteId?: number;
                         displayName: string;
                         avatarUrl: string;
                         avatarIcon: string;
@@ -707,8 +738,9 @@ export default function CallilogApp() {
 
                 const myCleanEmail = userEmail.toLowerCase().trim();
                 if (myCleanEmail) {
-                    athletesMap.set(myCleanEmail, {
+                    athletesMap.set(String(profile.id ?? myCleanEmail), {
                         email: myCleanEmail,
+                        athleteId: profile.id,
                         displayName: profile.display_name || user?.displayName || myCleanEmail.split("@")[0],
                         avatarUrl: profile.avatar_url || user?.photoURL || "",
                         avatarIcon: profile.avatar_icon || "⚡",
@@ -719,12 +751,15 @@ export default function CallilogApp() {
                 }
 
                 allPbs.forEach((p) => {
-                    const em = (p.email || "").toLowerCase().trim();
-                    if (!em) return;
-                    if (!athletesMap.has(em)) {
-                        athletesMap.set(em, {
-                            email: em,
-                            displayName: p.display_name || em.split("@")[0],
+                    const athleteId = Number(p.athlete_id);
+                    if (!Number.isSafeInteger(athleteId) || athleteId <= 0) return;
+
+                    const key = String(athleteId);
+                    if (!athletesMap.has(key)) {
+                        athletesMap.set(key, {
+                            email: "",
+                            athleteId,
+                            displayName: p.display_name || "Athlete",
                             avatarUrl: p.avatar_url || "",
                             avatarIcon: p.avatar_icon || "⚡",
                             isMasked: Boolean(p.is_masked),
@@ -732,12 +767,12 @@ export default function CallilogApp() {
                             bw: Number(p.bodyweight_at_time) || 75.0,
                         });
                     }
-                    athletesMap.get(em)!.pbs.push(p);
+                    athletesMap.get(key)!.pbs.push(p);
                 });
 
                 const leaderboard = Array.from(athletesMap.values())
                     .filter((ath) => {
-                        const isMe = ath.email === myCleanEmail;
+                        const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
                         return !ath.isMasked || isMe;
                     })
                     .map((ath) => {
@@ -746,6 +781,7 @@ export default function CallilogApp() {
                         const verifiedCount = ath.pbs.filter((p) => p.is_verified).length;
                         return {
                             email: ath.email,
+      athleteId: ath.athleteId,
                             displayName: ath.displayName,
                             avatarUrl: ath.avatarUrl,
                             avatarIcon: ath.avatarIcon,
@@ -776,13 +812,13 @@ export default function CallilogApp() {
 
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                             {leaderboard.map((ath, idx) => {
-                                const isMe = ath.email === myCleanEmail;
+                                const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
                                 const medalColors = ["#F59E0B", "#E2E8F0", "#CD7F32"];
                                 const rankColor = idx < 3 ? medalColors[idx] : "#525666";
 
                                 return (
                                     <div
-                                        key={ath.email}
+                                        key={ath.athleteId ?? ath.email}
                                         style={{
                                             display: "flex",
                                             justifyContent: "space-between",
@@ -855,15 +891,15 @@ export default function CallilogApp() {
             })()}
 
             {/* 7. TAB 4: ADMIN TERMINAL */}
-            {activeTab === "admin" && (
+            {activeTab === "admin" && isAdmin && (
                 <section className="titanium-slab" style={{ padding: "18px" }}>
                     <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#EF4444", marginBottom: "14px" }}>
                         Verification Audit Queue
                     </div>
-                    {allPbs.filter((p) => p.verification_status === "pending").length === 0 ? (
+                    {adminPbs.filter((p) => p.verification_status === "pending").length === 0 ? (
                         <div style={{ fontSize: "0.85rem", color: "#525666" }}>Audit queue is empty. All submissions verified.</div>
                     ) : (
-                        allPbs
+                        adminPbs
                             .filter((p) => p.verification_status === "pending")
                             .map((p) => (
                                 <div
@@ -911,7 +947,8 @@ export default function CallilogApp() {
                                     <div style={{ display: "flex", gap: "8px" }}>
                                         <button
                                             onClick={async () => {
-                                                await fetch("/api/admin", { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: true }) });
+                                                await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: true }) });
+                                                fetchAdminPbs();
                                                 fetchPbs();
                                             }}
                                             className="btn-action"
@@ -921,7 +958,8 @@ export default function CallilogApp() {
                                         </button>
                                         <button
                                             onClick={async () => {
-                                                await fetch("/api/admin", { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: false, reason: "Form Breakdown" }) });
+                                                await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: false, reason: "Form Breakdown" }) });
+                                                fetchAdminPbs();
                                                 fetchPbs();
                                             }}
                                             className="btn-action"

@@ -1,4 +1,4 @@
-import { query } from "@/lib/db";
+import { query, type QueryFunction } from "@/lib/db";
 import { SKILL_MAP } from "@/lib/skills";
 import { scoreSinglePB, type PBRecord } from "@/lib/elo";
 
@@ -16,7 +16,7 @@ type CleanupStats = { duplicatesRemoved: number; invalidRemoved: number };
  * deriving verification state. Highest ID wins among valid duplicates because
  * the submission endpoint replaces the PB and IDs are monotonically increasing.
  */
-async function cleanPBRecords(records: StoredPB[]): Promise<{ records: StoredPB[] } & CleanupStats> {
+async function cleanPBRecords(records: StoredPB[], db: QueryFunction = query): Promise<{ records: StoredPB[] } & CleanupStats> {
     const valid: StoredPB[] = [];
     let invalidRemoved = 0;
     let duplicatesRemoved = 0;
@@ -41,7 +41,7 @@ async function cleanPBRecords(records: StoredPB[]): Promise<{ records: StoredPB[
         const hasValidProof = !proof || /^https?:\/\//i.test(proof);
 
         if (!skill || !hasValidIdentity || !hasValidNumbers || !hasCorrectMeasurement || !hasValidDate || !hasValidProof) {
-            await query`DELETE FROM pbs WHERE id = ${pb.id}`;
+            await db`DELETE FROM pbs WHERE id = ${pb.id}`;
             invalidRemoved++;
             continue;
         }
@@ -56,7 +56,7 @@ async function cleanPBRecords(records: StoredPB[]): Promise<{ records: StoredPB[
     for (const pb of valid) {
         const key = String(pb.email).trim().toLowerCase() + "::" + pb.skill_id;
         if (seen.has(key)) {
-            await query`DELETE FROM pbs WHERE id = ${pb.id}`;
+            await db`DELETE FROM pbs WHERE id = ${pb.id}`;
             duplicatesRemoved++;
             continue;
         }
@@ -71,18 +71,18 @@ async function cleanPBRecords(records: StoredPB[]): Promise<{ records: StoredPB[
  * Idempotent self-healing pass. Runs data hygiene first, then verifies eligible
  * records from the strongest already-verified performance in the same category.
  */
-export async function reconcileVerification(): Promise<{
+export async function reconcileVerification(db: QueryFunction = query): Promise<{
     verified: number;
     duplicatesRemoved: number;
     invalidRemoved: number;
 }> {
-    const rawRecords = await query`
+    const rawRecords = await db`
         SELECT id, email, skill_id, weight, reps, duration, proof_url, is_verified,
                verification_status, rejection_reason, bodyweight_at_time, date
         FROM pbs
     ` as StoredPB[];
 
-    const cleaned = await cleanPBRecords(rawRecords);
+    const cleaned = await cleanPBRecords(rawRecords, db);
     const records = cleaned.records;
     const strongestVerified = new Map<string, number>();
 
@@ -106,7 +106,7 @@ export async function reconcileVerification(): Promise<{
         const score = scoreSinglePB({ ...pb, is_verified: false }, Number(pb.bodyweight_at_time) || 75);
         if (score > threshold) continue;
 
-        await query`
+        await db`
             UPDATE pbs
             SET is_verified = ${true},
                 verification_status = ${"verified"},

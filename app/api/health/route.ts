@@ -1,28 +1,35 @@
-// app/api/health/route.ts
-import { NextResponse } from 'next/server';
-import { query } from '@/lib/db'; // Import your postgres client
+import { query } from "@/lib/db";
+import { apiJson, apiOptions } from "@/lib/http";
 
-export async function GET() {
-    const startTime = Date.now();
+export function OPTIONS(request: Request) {
+  return apiOptions(request);
+}
 
-    try {
-        // A lightweight query to test the Hyperdrive connection
-        await query`SELECT 1 as ping`;
+export async function GET(request: Request) {
+  const startTime = Date.now();
 
-        const latency = Date.now() - startTime;
+  try {
+    await query`SELECT 1 AS ping`;
 
-        return NextResponse.json({
-            status: "ok",
-            timestamp: new Date().toISOString(),
-            database: "connected",
-            latency_ms: latency
-        });
-    } catch (error) {
-        return NextResponse.json({
-            status: "degraded",
-            timestamp: new Date().toISOString(),
-            database: "disconnected",
-            error: error instanceof Error ? error.message : "Unknown error"
-        }, { status: 503 }); // 503 Service Unavailable
-    }
+    return apiJson(request, {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+      database: "connected",
+      latency_ms: Date.now() - startTime,
+    });
+  } catch (error) {
+    // Keep diagnostics in server logs; never expose internal DB errors publicly.
+    console.error("[Health] Database connectivity check failed:", error);
+
+    return apiJson(
+      request,
+      {
+        status: "degraded",
+        timestamp: new Date().toISOString(),
+        database: "disconnected",
+        error: "Database connectivity check failed",
+      },
+      503,
+    );
+  }
 }

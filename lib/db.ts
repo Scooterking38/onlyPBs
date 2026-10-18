@@ -484,8 +484,43 @@ function executeMockQuery<T = Record<string, unknown>>(
     return list as unknown as T[];
   }
 
-  // 11. SELECT p.*, a.display_name ... FROM pbs p LEFT JOIN athletes a
+  // 11. SELECT ... FROM pbs, including the public leaderboard projection.
   if (/SELECT.*FROM\s+pbs/i.test(norm)) {
+    const isPublicLeaderboard =
+      /p\.is_verified\s*=\s*true/i.test(norm) &&
+      /p\.is_public_proof\s*=\s*true/i.test(norm) &&
+      /LEFT\s+JOIN\s+athletes/i.test(norm);
+
+    if (isPublicLeaderboard) {
+      const list = memoryStore.pbs
+        .filter((p) => Boolean(p.is_verified) && Boolean(p.is_public_proof))
+        .map((p) => {
+          const a = memoryStore.athletes.find(
+            (ath) => ath.email.toLowerCase() === p.email.toLowerCase()
+          );
+          return {
+            id: p.id,
+            athlete_id: a?.id,
+            skill_id: p.skill_id,
+            weight: p.weight,
+            reps: p.reps,
+            duration: p.duration,
+            proof_url: p.proof_url,
+            is_verified: p.is_verified,
+            verification_status: p.verification_status,
+            date: p.date,
+            bodyweight_at_time: p.bodyweight_at_time,
+            is_public_proof: p.is_public_proof,
+            display_name: a?.display_name || "Athlete",
+            avatar_url: a?.avatar_url || "",
+            avatar_icon: a?.avatar_icon || "⚡",
+            is_masked: Boolean(a?.is_masked),
+          };
+        })
+        .sort((a, b) => b.id - a.id);
+      return list as unknown as T[];
+    }
+
     const list = memoryStore.pbs
       .map((p) => {
         const a = memoryStore.athletes.find(
@@ -506,40 +541,78 @@ function executeMockQuery<T = Record<string, unknown>>(
   return [] as unknown as T[];
 }
 
+export type QueryFunction = <T = Record<string, unknown>>(
+  strings: TemplateStringsArray,
+  ...values: unknown[]
+) => Promise<T[]>;
+
+type PostgresTag = QueryFunction & {
+  begin<T>(callback: (sql: unknown) => Promise<T>): Promise<T>;
+};
+
+let postgresClient: PostgresTag | null = null;
+let postgresClientConnectionString: string | null = null;
+
+async function getPostgresClient(connectionString: string): Promise<PostgresTag> {
+  if (!postgresClient || postgresClientConnectionString !== connectionString) {
+    const postgres = (await import("postgres")).default;
+    postgresClient = postgres(connectionString, {
+      max: 1,
+      idle_timeout: 20,
+      connect_timeout: 3,
+      prepare: false,
+    }) as unknown as PostgresTag;
+    postgresClientConnectionString = connectionString;
+  }
+  return postgresClient;
+}
+
+function isProduction(): boolean {
+  return process.env.NODE_ENV === "production" || Boolean(process.env.VERCEL);
+}
+
 export async function query<T = Record<string, unknown>>(
   strings: TemplateStringsArray,
   ...values: unknown[]
 ): Promise<T[]> {
   const connectionString = process.env.DATABASE_URL;
 
-  if (connectionString) {
-    try {
-      const postgres = (await import("postgres")).default;
-      const client = postgres(connectionString, {
-        max: 1,
-        idle_timeout: 20,
-        connect_timeout: 3,
-        prepare: false,
-      });
-      const caller = client as unknown as (
-        s: TemplateStringsArray,
-        ...args: unknown[]
-      ) => Promise<unknown>;
-      return (await caller(strings, ...values)) as unknown as T[];
-    } catch (err) {
-      console.warn(
-        "[AI Studio] PostgreSQL query error, falling back to in-memory store:",
-        err
-      );
-    }
+  if (!connectionString) {
+    if (isProduction()) throw new Error("DATABASE_URL is required in production.");
+    const rawSql = strings.reduce(
+      (acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ""),
+      ""
+    );
+    return executeMockQuery<T>(rawSql, values);
   }
 
-  // Fallback to in-memory mock
-  const rawSql = strings.reduce(
-    (acc, str, i) => acc + str + (i < values.length ? `$${i + 1}` : ""),
-    ""
-  );
-  return executeMockQuery<T>(rawSql, values);
+  try {
+    const client = await getPostgresClient(connectionString);
+    return await client<T>(strings, ...values);
+  } catch (error) {
+    console.error("[Database] PostgreSQL query failed.", error);
+    throw new Error("Database query failed.");
+  }
+}
+
+export async function transaction<T>(
+  work: (tx: QueryFunction) => Promise<T>
+): Promise<T> {
+  const connectionString = process.env.DATABASE_URL;
+
+  if (!connectionString) {
+    if (isProduction()) throw new Error("DATABASE_URL is required in production.");
+    // The in-memory mock does not support rollback.
+    return work(query);
+  }
+
+  try {
+    const client = await getPostgresClient(connectionString);
+    return await client.begin((tx) => work(tx as QueryFunction));
+  } catch (error) {
+    console.error("[Database] PostgreSQL transaction failed.", error);
+    throw new Error("Database transaction failed.");
+  }
 }
 
 export async function getClient() {
