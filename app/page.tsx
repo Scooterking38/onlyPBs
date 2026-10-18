@@ -7,6 +7,7 @@ import { auth, login, logout } from "@/lib/firebase";
 import { SKILLS, SkillNode, TIER_CONFIG, getNextStepSkill } from "@/lib/skills";
 import { PBRecord, computeDualELO, getRankBadge, scoreSinglePB } from "@/lib/elo";
 import { computeDiagnostics } from "@/lib/analytics";
+import { computeCalisthenics1RM, getYouTubeEmbedUrl, exportFighterCardAsPng } from "@/lib/upgrades";
 
 interface AthleteProfile {
     email: string;
@@ -29,18 +30,18 @@ interface PBWithAthlete extends PBRecord {
 }
 
 export default function CallilogApp() {
-    // --- Auth State ---
+    // Auth State
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
-
     const userEmail = user?.email || "";
 
+    // Navigation & Data
     const [activeTab, setActiveTab] = useState<"vault" | "intel" | "arena" | "admin">("vault");
     const [selectedBranch, setSelectedBranch] = useState<string>("Pull");
     const [myPbs, setMyPbs] = useState<PBRecord[]>([]);
     const [allPbs, setAllPbs] = useState<PBWithAthlete[]>([]);
 
-    // Profile state
+    // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
         email: "",
         display_name: "",
@@ -52,14 +53,17 @@ export default function CallilogApp() {
         is_masked: false,
     });
 
-    // Search state
+    // Search & Modals
     const [searchQuery, setSearchQuery] = useState("");
     const searchInputRef = useRef<HTMLInputElement>(null);
-
-    // Modal states
     const [activeModalSkill, setActiveModalSkill] = useState<SkillNode | null>(null);
     const [showFighterCard, setShowFighterCard] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
+    const [isExportingCard, setIsExportingCard] = useState(false);
+
+    // New Upgrades State: Head-to-Head & Video Preview
+    const [compareTarget, setCompareTarget] = useState<{ displayName: string; pbs: PBRecord[]; bw: number } | null>(null);
+    const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
 
     // Edit Profile Form State
     const [editName, setEditName] = useState(profile.display_name);
@@ -76,13 +80,13 @@ export default function CallilogApp() {
     const [proofUrl, setProofUrl] = useState("");
     const [isPublic, setIsPublic] = useState(true);
 
-    // 1. Firebase Auth Listener
+    // Listen to Firebase Auth
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        const unsub = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
             setAuthLoading(false);
         });
-        return () => unsubscribe();
+        return () => unsub();
     }, []);
 
     const fetchProfile = async () => {
@@ -138,7 +142,7 @@ export default function CallilogApp() {
                 setMyPbs([]);
             }
         } catch (err) {
-            console.error("Failed to load and reconcile records", err);
+            console.error("Failed to load records", err);
         }
     };
 
@@ -151,7 +155,7 @@ export default function CallilogApp() {
         }
     }, [userEmail]);
 
-    // Keyboard shortcut listener for Cmd + K
+    // Keyboard shortcut listener
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -168,10 +172,7 @@ export default function CallilogApp() {
     const badge = getRankBadge(officialELO);
     const diagnostics = computeDiagnostics(myPbs, athleteBw);
 
-    // =========================================================================
-    // PEAK PR LOGIC (FIXED):
-    // Latest log unconditionally overwrites older entries so corrections work.
-    // =========================================================================
+    // Latest log unconditionally overwrites older entries
     const peaks = useMemo(() => {
         const map = new Map<string, PBRecord>();
         myPbs.forEach((p) => {
@@ -180,7 +181,7 @@ export default function CallilogApp() {
         return map;
     }, [myPbs]);
 
-    // Top 3 Feats for Fighter Card
+    // Top 3 Feats
     const top3Feats = useMemo(() => {
         return Array.from(peaks.values())
             .map((p) => ({ ...p, score: scoreSinglePB(p, athleteBw) }))
@@ -188,7 +189,7 @@ export default function CallilogApp() {
             .slice(0, 3);
     }, [peaks, athleteBw]);
 
-    // Filter skills based on search or category
+    // Filter skills
     const displayedSkills = useMemo(() => {
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
@@ -196,6 +197,12 @@ export default function CallilogApp() {
         }
         return SKILLS.filter((s) => s.category === selectedBranch);
     }, [searchQuery, selectedBranch]);
+
+    // Calculate live 1RM preview in Record Modal
+    const live1RM = useMemo(() => {
+        if (!activeModalSkill) return null;
+        return computeCalisthenics1RM(athleteBw, ballast, repsOrDur);
+    }, [activeModalSkill, athleteBw, ballast, repsOrDur]);
 
     const handleSavePb = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -244,7 +251,7 @@ export default function CallilogApp() {
         fetchPbs();
     };
 
-    // Helper Avatar Renderer
+    // Avatar Renderer
     const renderAvatar = (url?: string, icon?: string, size = 44) => {
         const resolvedUrl = url || user?.photoURL;
         if (resolvedUrl && resolvedUrl.trim()) {
@@ -285,12 +292,12 @@ export default function CallilogApp() {
         );
     };
 
-    // SVG Radar Coordinates
-    const radarPoints = useMemo(() => {
+    // Radar points generator
+    const getRadarPoints = (axes: { score: number }[]) => {
         const center = 100;
         const radius = 70;
-        const total = diagnostics.radarAxes.length;
-        return diagnostics.radarAxes
+        const total = axes.length;
+        return axes
             .map((axis, i) => {
                 const angle = ((Math.PI * 2) / total) * i - Math.PI / 2;
                 const val = Math.max(10, axis.score) / 100;
@@ -299,7 +306,15 @@ export default function CallilogApp() {
                 return `${x.toFixed(1)},${y.toFixed(1)}`;
             })
             .join(" ");
-    }, [diagnostics.radarAxes]);
+    };
+
+    const radarPoints = useMemo(() => getRadarPoints(diagnostics.radarAxes), [diagnostics.radarAxes]);
+
+    // Head-to-Head Comparison Diagnostics
+    const compareDiagnostics = useMemo(() => {
+        if (!compareTarget) return null;
+        return computeDiagnostics(compareTarget.pbs, compareTarget.bw);
+    }, [compareTarget]);
 
     if (authLoading) {
         return (
@@ -310,26 +325,18 @@ export default function CallilogApp() {
     }
 
     return (
-        <main className="app-shell">
-            {/* ===================================================================
-        1. TOP HUD (AVATAR + PROFILE TRIGGER + DUAL ELO)
-        =================================================================== */}
+        <main className="app-shell" style={{ paddingBottom: "80px" }}>
+            {/* 1. TOP HUD */}
             <header className="titanium-slab" style={{ padding: "18px 22px", marginBottom: "16px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
-                        {/* Clickable Avatar */}
                         <div
                             onClick={() => user && setShowProfileModal(true)}
                             title={user ? "Edit profile" : "Sign in required"}
                             role="button"
                             tabIndex={0}
                             aria-label="Edit athlete profile"
-                            onKeyDown={(event) => {
-                                if (user && (event.key === "Enter" || event.key === " ")) {
-                                    event.preventDefault();
-                                    setShowProfileModal(true);
-                                }
-                            }}
+                            onKeyDown={(e) => user && (e.key === "Enter" || e.key === " ") && setShowProfileModal(true)}
                             style={{ cursor: user ? "pointer" : "default", position: "relative" }}
                         >
                             {renderAvatar(profile.avatar_url, profile.avatar_icon, 52)}
@@ -349,7 +356,7 @@ export default function CallilogApp() {
                                 {profile.is_masked && <span className="pill-badge pill-slate">👻 GHOST</span>}
                             </div>
 
-                            <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "0.78rem", color: "#6C7282" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "0.78rem", color: "#6C7282", flexWrap: "wrap" }}>
                                 {user ? (
                                     <>
                                         <span>{athleteBw} KG BW</span>
@@ -387,11 +394,7 @@ export default function CallilogApp() {
                                         </button>
                                     </>
                                 ) : (
-                                    <button
-                                        onClick={login}
-                                        className="btn-primary"
-                                        style={{ padding: "4px 12px", fontSize: "0.78rem" }}
-                                    >
+                                    <button onClick={login} className="btn-primary" style={{ padding: "4px 12px", fontSize: "0.78rem" }}>
                                         Sign in with Google
                                     </button>
                                 )}
@@ -422,9 +425,7 @@ export default function CallilogApp() {
                 </div>
             </header>
 
-            {/* ===================================================================
-        2. SEARCH FACILITY (CMD + K SUPPORT)
-        =================================================================== */}
+            {/* 2. SEARCH FACILITY */}
             <div style={{ position: "relative", marginBottom: "16px" }}>
                 <input
                     ref={searchInputRef}
@@ -448,25 +449,14 @@ export default function CallilogApp() {
                 {searchQuery && (
                     <button
                         onClick={() => setSearchQuery("")}
-                        style={{
-                            position: "absolute",
-                            right: "12px",
-                            top: "50%",
-                            transform: "translateY(-50%)",
-                            background: "none",
-                            border: "none",
-                            color: "#6C7282",
-                            cursor: "pointer",
-                        }}
+                        style={{ position: "absolute", right: "12px", top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#6C7282", cursor: "pointer" }}
                     >
                         ✕
                     </button>
                 )}
             </div>
 
-            {/* ===================================================================
-        3. MASTER NAVIGATION
-        =================================================================== */}
+            {/* 3. DESKTOP NAVIGATION TRAY */}
             <nav aria-label="Main sections" className="recessed-tray app-navigation" style={{ display: "flex", padding: "4px", gap: "4px", marginBottom: "16px" }}>
                 {(["vault", "intel", "arena", "admin"] as const).map((tab) => (
                     <button
@@ -496,9 +486,7 @@ export default function CallilogApp() {
                 ))}
             </nav>
 
-            {/* ===================================================================
-        4. TAB 1: THE VAULT
-        =================================================================== */}
+            {/* 4. TAB 1: THE VAULT */}
             {activeTab === "vault" && (
                 <section>
                     {!searchQuery && (
@@ -533,14 +521,7 @@ export default function CallilogApp() {
                             const nextStep = getNextStepSkill(skill.id);
 
                             return (
-                                <div
-                                    key={skill.id}
-                                    className="titanium-slab"
-                                    style={{
-                                        padding: "14px 18px",
-                                        borderLeft: `3px solid ${tierInfo.color}`,
-                                    }}
-                                >
+                                <div key={skill.id} className="titanium-slab" style={{ padding: "14px 18px", borderLeft: `3px solid ${tierInfo.color}` }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
                     <span
                         style={{
@@ -569,18 +550,14 @@ export default function CallilogApp() {
 
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                                         <div>
-                                            <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#EDEDED" }}>
-                                                {skill.name}
-                                            </div>
+                                            <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#EDEDED" }}>{skill.name}</div>
                                             {peak ? (
                                                 <div style={{ display: "flex", alignItems: "baseline", gap: "8px", marginTop: "3px" }}>
                           <span className="num-font" style={{ fontSize: "1.15rem", fontWeight: 700, color: "#EDEDED" }}>
                             {skill.type === "iso" ? peak.duration : peak.reps}
                               {unit}
                           </span>
-                                                    {peak.weight > 0 && (
-                                                        <span style={{ fontSize: "0.8rem", color: "#7E8494" }}>@ +{peak.weight}kg</span>
-                                                    )}
+                                                    {peak.weight > 0 && <span style={{ fontSize: "0.8rem", color: "#7E8494" }}>@ +{peak.weight}kg</span>}
                                                     <span style={{ fontSize: "0.7rem", color: "#525666" }}>Logged {peak.date}</span>
                                                 </div>
                                             ) : (
@@ -591,21 +568,32 @@ export default function CallilogApp() {
                                             )}
                                         </div>
 
-                                        <button
-                                            onClick={() => {
-                                                if (!user) {
-                                                    login();
-                                                    return;
-                                                }
-                                                setActiveModalSkill(skill);
-                                                setRepsOrDur(peak ? (skill.type === "iso" ? peak.duration : peak.reps) : skill.reqValue);
-                                                setBallast(peak?.weight || 0);
-                                                setProofUrl(peak?.proof_url || "");
-                                            }}
-                                            className="btn-action"
-                                        >
-                                            {peak ? "Update" : "Record"}
-                                        </button>
+                                        <div style={{ display: "flex", gap: "8px" }}>
+                                            {peak?.proof_url && (
+                                                <button
+                                                    onClick={() => setPreviewVideoUrl(peak.proof_url)}
+                                                    className="btn-action"
+                                                    style={{ padding: "6px 10px", fontSize: "0.75rem", borderColor: "#E2A73B", color: "#E2A73B" }}
+                                                >
+                                                    ▶ Proof
+                                                </button>
+                                            )}
+                                            <button
+                                                onClick={() => {
+                                                    if (!user) {
+                                                        login();
+                                                        return;
+                                                    }
+                                                    setActiveModalSkill(skill);
+                                                    setRepsOrDur(peak ? (skill.type === "iso" ? peak.duration : peak.reps) : skill.reqValue);
+                                                    setBallast(peak?.weight || 0);
+                                                    setProofUrl(peak?.proof_url || "");
+                                                }}
+                                                className="btn-action"
+                                            >
+                                                {peak ? "Update" : "Record"}
+                                            </button>
+                                        </div>
                                     </div>
 
                                     {nextStep && (
@@ -623,7 +611,9 @@ export default function CallilogApp() {
                                         >
                                             <span style={{ color: "#E2A73B", fontWeight: 700 }}>NEXT EVOLUTION →</span>
                                             <span style={{ color: "#EDEDED", fontWeight: 600 }}>{nextStep.name}</span>
-                                            <span>(Tier {nextStep.tier} · ×{nextStep.diff.toFixed(1)})</span>
+                                            <span>
+                        (Tier {nextStep.tier} · ×{nextStep.diff.toFixed(1)})
+                      </span>
                                         </div>
                                     )}
                                 </div>
@@ -633,18 +623,14 @@ export default function CallilogApp() {
                 </section>
             )}
 
-            {/* ===================================================================
-        5. TAB 2: DEEP ANALYTICS + RADAR WEB
-        =================================================================== */}
+            {/* 5. TAB 2: DEEP ANALYTICS */}
             {activeTab === "intel" && (
                 <section style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                     <div className="titanium-slab" style={{ padding: "16px 20px", borderLeft: "3px solid #E2A73B" }}>
             <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.08em", textTransform: "uppercase" }}>
               Diagnostic Specialization
             </span>
-                        <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#EDEDED", marginTop: "3px" }}>
-                            {diagnostics.archetype}
-                        </div>
+                        <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#EDEDED", marginTop: "3px" }}>{diagnostics.archetype}</div>
                         <p style={{ fontSize: "0.82rem", color: "#8A90A2", margin: "4px 0 0 0" }}>{diagnostics.archetypeDesc}</p>
                     </div>
 
@@ -655,15 +641,7 @@ export default function CallilogApp() {
                         <div style={{ display: "flex", justifyContent: "center" }}>
                             <svg width="240" height="240" viewBox="0 0 200 200">
                                 {[0.25, 0.5, 0.75, 1.0].map((level, idx) => (
-                                    <circle
-                                        key={idx}
-                                        cx="100"
-                                        cy="100"
-                                        r={70 * level}
-                                        fill="none"
-                                        stroke="rgba(255, 255, 255, 0.08)"
-                                        strokeWidth="1"
-                                    />
+                                    <circle key={idx} cx="100" cy="100" r={70 * level} fill="none" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
                                 ))}
                                 {diagnostics.radarAxes.map((_, i) => {
                                     const angle = ((Math.PI * 2) / diagnostics.radarAxes.length) * i - Math.PI / 2;
@@ -712,9 +690,7 @@ export default function CallilogApp() {
                 </section>
             )}
 
-            {/* ===================================================================
-        6. TAB 3: THE ARENA (RANKED STRICTLY BY OFFICIAL ELO)
-        =================================================================== */}
+            {/* 6. TAB 3: THE ARENA */}
             {activeTab === "arena" && (() => {
                 const athletesMap = new Map<
                     string,
@@ -778,6 +754,8 @@ export default function CallilogApp() {
                             unofficialELO,
                             badge: rankBadge,
                             verifiedCount,
+                            rawPbs: ath.pbs,
+                            bw: ath.bw,
                         };
                     })
                     .sort((a, b) => b.officialELO - a.officialELO);
@@ -793,9 +771,7 @@ export default function CallilogApp() {
                                     Ranked strictly by verified competitive power scores.
                                 </div>
                             </div>
-                            <div style={{ fontSize: "0.75rem", color: "#8A90A2", fontWeight: 600 }}>
-                                {leaderboard.length} Ranked Athletes
-                            </div>
+                            <div style={{ fontSize: "0.75rem", color: "#8A90A2", fontWeight: 600 }}>{leaderboard.length} Ranked Athletes</div>
                         </div>
 
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -815,6 +791,8 @@ export default function CallilogApp() {
                                             borderRadius: "6px",
                                             background: isMe ? "rgba(226, 167, 59, 0.05)" : "rgba(255, 255, 255, 0.02)",
                                             border: isMe ? "1px solid rgba(226, 167, 59, 0.3)" : "1px solid rgba(255, 255, 255, 0.04)",
+                                            flexWrap: "wrap",
+                                            gap: "10px",
                                         }}
                                     >
                                         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -826,9 +804,7 @@ export default function CallilogApp() {
 
                                             <div>
                                                 <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                          <span style={{ fontWeight: 700, fontSize: "0.95rem", color: isMe ? "#FFF" : "#EDEDED" }}>
-                            {ath.displayName}
-                          </span>
+                                                    <span style={{ fontWeight: 700, fontSize: "0.95rem", color: isMe ? "#FFF" : "#EDEDED" }}>{ath.displayName}</span>
                                                     {isMe && <span style={{ fontSize: "0.65rem", color: "#E2A73B", fontWeight: 700 }}>(YOU)</span>}
                                                     {ath.isMasked && <span style={{ fontSize: "0.65rem", color: "#A78BFA", fontWeight: 700 }}>👻 GHOST</span>}
                                                 </div>
@@ -843,12 +819,31 @@ export default function CallilogApp() {
                                             </div>
                                         </div>
 
-                                        <div style={{ textAlign: "right" }}>
-                                            <div className="num-font" style={{ fontSize: "1.4rem", fontWeight: 800, color: "#EDEDED", lineHeight: 1 }}>
-                                                {ath.officialELO}
-                                            </div>
-                                            <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.05em", textTransform: "uppercase", marginTop: "3px" }}>
-                                                Official ELO
+                                        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+                                            {!isMe && (
+                                                <button
+                                                    onClick={() => setCompareTarget({ displayName: ath.displayName, pbs: ath.rawPbs, bw: ath.bw })}
+                                                    style={{
+                                                        background: "rgba(255, 255, 255, 0.06)",
+                                                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                                                        color: "#EDEDED",
+                                                        padding: "4px 10px",
+                                                        borderRadius: "4px",
+                                                        fontSize: "0.72rem",
+                                                        fontWeight: 700,
+                                                        cursor: "pointer",
+                                                    }}
+                                                >
+                                                    ⚔️ Compare
+                                                </button>
+                                            )}
+                                            <div style={{ textAlign: "right" }}>
+                                                <div className="num-font" style={{ fontSize: "1.4rem", fontWeight: 800, color: "#EDEDED", lineHeight: 1 }}>
+                                                    {ath.officialELO}
+                                                </div>
+                                                <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.05em", textTransform: "uppercase", marginTop: "3px" }}>
+                                                    Official ELO
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -859,9 +854,7 @@ export default function CallilogApp() {
                 );
             })()}
 
-            {/* ===================================================================
-        7. TAB 4: ADMIN TERMINAL
-        =================================================================== */}
+            {/* 7. TAB 4: ADMIN TERMINAL */}
             {activeTab === "admin" && (
                 <section className="titanium-slab" style={{ padding: "18px" }}>
                     <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#EF4444", marginBottom: "14px" }}>
@@ -897,9 +890,22 @@ export default function CallilogApp() {
                                             {p.reps || p.duration} {p.duration ? "s" : "r"} @ +{p.weight}kg ballast
                                         </div>
                                         {p.proof_url && (
-                                            <a href={p.proof_url} target="_blank" rel="noreferrer" style={{ fontSize: "0.75rem", color: "#E2A73B", textDecoration: "underline", display: "inline-block", marginTop: "4px" }}>
-                                                View Video Proof ↗
-                                            </a>
+                                            <button
+                                                onClick={() => setPreviewVideoUrl(p.proof_url || null)}
+                                                style={{
+                                                    background: "none",
+                                                    border: "none",
+                                                    padding: 0,
+                                                    fontSize: "0.75rem",
+                                                    color: "#E2A73B",
+                                                    textDecoration: "underline",
+                                                    cursor: "pointer",
+                                                    marginTop: "4px",
+                                                    display: "block",
+                                                }}
+                                            >
+                                                ▶ Watch Video Proof In-App
+                                            </button>
                                         )}
                                     </div>
                                     <div style={{ display: "flex", gap: "8px" }}>
@@ -930,15 +936,158 @@ export default function CallilogApp() {
                 </section>
             )}
 
-            {/* ===================================================================
-        8. EDIT PROFILE MODAL (WITH PFP URL & LIVE PREVIEW)
-        =================================================================== */}
+            {/* 8. MODAL: HEAD-TO-HEAD ARENA COMPARISON */}
+            {compareTarget && compareDiagnostics && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 130 }}>
+                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "480px", padding: "24px" }}>
+                        <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED", display: "flex", justifyContent: "space-between" }}>
+                            <span>⚔️ Head-to-Head Vector Clash</span>
+                            <button onClick={() => setCompareTarget(null)} style={{ background: "none", border: "none", color: "#6C7282", cursor: "pointer" }}>✕</button>
+                        </h3>
+
+                        <div style={{ display: "flex", justifyContent: "space-around", marginBottom: "16px" }}>
+                            <div style={{ textAlign: "center" }}>
+                                <span style={{ fontSize: "0.8rem", color: "#E2A73B", fontWeight: 700 }}>YOU ({officialELO} ELO)</span>
+                            </div>
+                            <span style={{ color: "#6C7282", fontWeight: 800 }}>VS</span>
+                            <div style={{ textAlign: "center" }}>
+                <span style={{ fontSize: "0.8rem", color: "#38BDF8", fontWeight: 700 }}>
+                  {compareTarget.displayName.toUpperCase()} ({computeDualELO(compareTarget.pbs, compareTarget.bw).officialELO} ELO)
+                </span>
+                            </div>
+                        </div>
+
+                        {/* Overlaid Vector Web */}
+                        <div style={{ display: "flex", justifyContent: "center", marginBottom: "16px" }}>
+                            <svg width="240" height="240" viewBox="0 0 200 200">
+                                {[0.25, 0.5, 0.75, 1.0].map((level, idx) => (
+                                    <circle key={idx} cx="100" cy="100" r={70 * level} fill="none" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
+                                ))}
+                                {diagnostics.radarAxes.map((_, i) => {
+                                    const angle = ((Math.PI * 2) / diagnostics.radarAxes.length) * i - Math.PI / 2;
+                                    const x2 = 100 + 70 * Math.cos(angle);
+                                    const y2 = 100 + 70 * Math.sin(angle);
+                                    return <line key={i} x1="100" y1="100" x2={x2} y2={y2} stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />;
+                                })}
+                                {/* User Polygon (Gold) */}
+                                <polygon points={radarPoints} fill="rgba(226, 167, 59, 0.25)" stroke="#E2A73B" strokeWidth="2" />
+                                {/* Opponent Polygon (Cyan) */}
+                                <polygon points={getRadarPoints(compareDiagnostics.radarAxes)} fill="rgba(56, 189, 248, 0.25)" stroke="#38BDF8" strokeWidth="2" />
+                            </svg>
+                        </div>
+
+                        <button onClick={() => setCompareTarget(null)} className="btn-primary" style={{ width: "100%", padding: "10px" }}>
+                            Close Comparison
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* 9. MODAL: IN-APP VIDEO PROOF PLAYER */}
+            {previewVideoUrl && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 140 }}>
+                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "560px", padding: "20px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+                            <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#E2A73B" }}>CERTIFIED PROOF PLAYBACK</span>
+                            <button onClick={() => setPreviewVideoUrl(null)} style={{ background: "none", border: "none", color: "#EDEDED", cursor: "pointer", fontSize: "1.1rem" }}>✕</button>
+                        </div>
+
+                        {getYouTubeEmbedUrl(previewVideoUrl) ? (
+                            <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "8px" }}>
+                                <iframe
+                                    src={getYouTubeEmbedUrl(previewVideoUrl)!}
+                                    title="Proof Video"
+                                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                                    allowFullScreen
+                                />
+                            </div>
+                        ) : (
+                            <div style={{ padding: "30px 20px", textAlign: "center", background: "#0E1015", borderRadius: "8px" }}>
+                                <p style={{ fontSize: "0.85rem", color: "#8A90A2", marginBottom: "12px" }}>External Video / Drive Link</p>
+                                <a href={previewVideoUrl} target="_blank" rel="noreferrer" className="btn-primary" style={{ display: "inline-block", padding: "8px 16px" }}>
+                                    Open Proof in New Tab ↗
+                                </a>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* 10. MODAL: EXPORTABLE HD FIGHTER CARD */}
+            {showFighterCard && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 110 }}>
+                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "340px", padding: "20px", textAlign: "center" }}>
+                        {/* Downloadable Wrapper Box */}
+                        <div id="fighter-card-export" style={{ background: "#0A0B0E", padding: "20px", borderRadius: "10px", border: "1px solid rgba(226, 167, 59, 0.4)" }}>
+                            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.1em" }}>CERTIFIED ATHLETE PASSPORT</span>
+
+                            <div style={{ display: "flex", justifyContent: "center", margin: "14px 0 6px 0" }}>
+                                {renderAvatar(profile.avatar_url, profile.avatar_icon, 72)}
+                            </div>
+
+                            <h2 style={{ fontSize: "1.3rem", fontWeight: 800, color: "#EDEDED", margin: 0 }}>{profile.display_name}</h2>
+                            <div style={{ fontSize: "0.75rem", color: "#8A90A2", marginBottom: "14px" }}>
+                                {athleteBw}kg · {profile.discipline}
+                            </div>
+
+                            <div style={{ display: "flex", justifyContent: "center", gap: "20px", background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "8px", marginBottom: "16px" }}>
+                                <div>
+                                    <div style={{ fontSize: "0.6rem", color: "#E2A73B", fontWeight: 700 }}>OFFICIAL ELO</div>
+                                    <div className="num-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "#FFF" }}>{officialELO}</div>
+                                </div>
+                                <div style={{ borderLeft: "1px solid rgba(255,255,255,0.1)", paddingLeft: "16px" }}>
+                                    <div style={{ fontSize: "0.6rem", color: "#6C7282", fontWeight: 700 }}>DIVISION</div>
+                                    <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#EDEDED", marginTop: "4px" }}>{badge.title}</div>
+                                </div>
+                            </div>
+
+                            <div style={{ textAlign: "left", marginBottom: "16px" }}>
+                                <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#6C7282", textTransform: "uppercase", marginBottom: "6px" }}>Signature Feats</div>
+                                {top3Feats.map((f, idx) => {
+                                    const meta = SKILLS.find((s) => s.id === f.skill_id);
+                                    const unit = meta?.type === "iso" ? "s" : "r";
+                                    return (
+                                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                                            <span style={{ color: "#EDEDED", fontWeight: 600 }}>{meta?.name}</span>
+                                            <span className="num-font" style={{ color: "#E2A73B", fontWeight: 700 }}>
+                        {f.reps || f.duration}{unit} {f.weight > 0 ? `(+${f.weight}kg)` : ""}
+                      </span>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <div style={{ fontSize: "0.6rem", color: "#525666" }}>{profile.tagline || "CALLILOG VERIFIED // NO COMPROMISE"}</div>
+                        </div>
+
+                        {/* Actions */}
+                        <div style={{ display: "flex", gap: "8px", marginTop: "14px" }}>
+                            <button
+                                disabled={isExportingCard}
+                                onClick={async () => {
+                                    setIsExportingCard(true);
+                                    await exportFighterCardAsPng("fighter-card-export", profile.display_name || "athlete");
+                                    setIsExportingCard(false);
+                                }}
+                                className="btn-primary"
+                                style={{ flex: 1, padding: "10px", background: "#E2A73B", color: "#000" }}
+                            >
+                                {isExportingCard ? "Generating PNG..." : "📥 Save Card Image"}
+                            </button>
+                            <button onClick={() => setShowFighterCard(false)} className="btn-action" style={{ padding: "10px 14px" }}>
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 11. MODAL: EDIT PROFILE */}
             {showProfileModal && (
                 <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 120 }}>
                     <div className="titanium-slab" style={{ width: "100%", maxWidth: "420px", padding: "24px" }}>
-                        <h3 style={{ fontSize: "1.15rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED" }}>
-                            Edit Athlete Identity
-                        </h3>
+                        <h3 style={{ fontSize: "1.15rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED" }}>Edit Athlete Identity</h3>
                         <form onSubmit={handleSaveProfile} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: "14px", background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "8px" }}>
                                 {renderAvatar(editAvatarUrl, editIcon, 56)}
@@ -949,12 +1098,10 @@ export default function CallilogApp() {
                             </div>
 
                             <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    PROFILE PICTURE URL (IMGUR, DISCORD, DRIVE, WEB)
-                                </label>
+                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>PROFILE PICTURE URL</label>
                                 <input
                                     type="url"
-                                    placeholder="https://i.imgur.com/... or any image link"
+                                    placeholder="https://..."
                                     value={editAvatarUrl}
                                     onChange={(e) => setEditAvatarUrl(e.target.value)}
                                     style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
@@ -963,9 +1110,7 @@ export default function CallilogApp() {
 
                             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                                 <div>
-                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                        DISPLAY NAME
-                                    </label>
+                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>DISPLAY NAME</label>
                                     <input
                                         type="text"
                                         value={editName}
@@ -975,9 +1120,7 @@ export default function CallilogApp() {
                                     />
                                 </div>
                                 <div>
-                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                        BODYWEIGHT (KG)
-                                    </label>
+                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>BODYWEIGHT (KG)</label>
                                     <input
                                         type="number"
                                         step="0.5"
@@ -990,9 +1133,7 @@ export default function CallilogApp() {
                             </div>
 
                             <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    DISCIPLINE SPECIALIZATION
-                                </label>
+                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>DISCIPLINE SPECIALIZATION</label>
                                 <select
                                     value={editDiscipline}
                                     onChange={(e) => setEditDiscipline(e.target.value)}
@@ -1007,9 +1148,7 @@ export default function CallilogApp() {
                             </div>
 
                             <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    MANTRA / BIO TAGLINE
-                                </label>
+                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>MANTRA / BIO TAGLINE</label>
                                 <input
                                     type="text"
                                     placeholder="e.g. Lever & planche practitioner"
@@ -1020,12 +1159,7 @@ export default function CallilogApp() {
                             </div>
 
                             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-                                <input
-                                    type="checkbox"
-                                    id="ghost_toggle"
-                                    checked={editMasked}
-                                    onChange={(e) => setEditMasked(e.target.checked)}
-                                />
+                                <input type="checkbox" id="ghost_toggle" checked={editMasked} onChange={(e) => setEditMasked(e.target.checked)} />
                                 <label htmlFor="ghost_toggle" style={{ fontSize: "0.75rem", color: "#A78BFA", cursor: "pointer" }}>
                                     👻 Ghost Mode (Hide from public Leaderboard)
                                 </label>
@@ -1044,64 +1178,7 @@ export default function CallilogApp() {
                 </div>
             )}
 
-            {/* ===================================================================
-        9. SHAREABLE FIGHTER CARD MODAL (WITH PFP)
-        =================================================================== */}
-            {showFighterCard && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 110 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "340px", padding: "24px", textAlign: "center", border: "1px solid rgba(226, 167, 59, 0.4)" }}>
-            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.1em" }}>
-              CERTIFIED ATHLETE PASSPORT
-            </span>
-
-                        <div style={{ display: "flex", justifyContent: "center", margin: "14px 0 6px 0" }}>
-                            {renderAvatar(profile.avatar_url, profile.avatar_icon, 72)}
-                        </div>
-
-                        <h2 style={{ fontSize: "1.3rem", fontWeight: 800, color: "#EDEDED", margin: 0 }}>{profile.display_name}</h2>
-                        <div style={{ fontSize: "0.75rem", color: "#8A90A2", marginBottom: "14px" }}>{athleteBw}kg · {profile.discipline}</div>
-
-                        <div style={{ display: "flex", justifyContent: "center", gap: "20px", background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "8px", marginBottom: "16px" }}>
-                            <div>
-                                <div style={{ fontSize: "0.6rem", color: "#E2A73B", fontWeight: 700 }}>OFFICIAL ELO</div>
-                                <div className="num-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "#FFF" }}>{officialELO}</div>
-                            </div>
-                            <div style={{ borderLeft: "1px solid rgba(255,255,255,0.1)", paddingLeft: "16px" }}>
-                                <div style={{ fontSize: "0.6rem", color: "#6C7282", fontWeight: 700 }}>DIVISION</div>
-                                <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#EDEDED", marginTop: "4px" }}>{badge.title}</div>
-                            </div>
-                        </div>
-
-                        <div style={{ textAlign: "left", marginBottom: "16px" }}>
-                            <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#6C7282", textTransform: "uppercase", marginBottom: "6px" }}>Signature Feats</div>
-                            {top3Feats.map((f, idx) => {
-                                const meta = SKILLS.find((s) => s.id === f.skill_id);
-                                const unit = meta?.type === "iso" ? "s" : "r";
-                                return (
-                                    <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                                        <span style={{ color: "#EDEDED", fontWeight: 600 }}>{meta?.name}</span>
-                                        <span className="num-font" style={{ color: "#E2A73B", fontWeight: 700 }}>
-                      {f.reps || f.duration}{unit} {f.weight > 0 ? `(+${f.weight}kg)` : ""}
-                    </span>
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        <div style={{ fontSize: "0.6rem", color: "#525666", marginBottom: "14px" }}>
-                            {profile.tagline || "CALLILOG VERIFIED // NO COMPROMISE"}
-                        </div>
-
-                        <button onClick={() => setShowFighterCard(false)} className="btn-primary" style={{ width: "100%", padding: "10px" }}>
-                            Close Card
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* ===================================================================
-        10. LOG & UPDATE MODAL
-        =================================================================== */}
+            {/* 12. MODAL: LOG/UPDATE BENCHMARK (WITH 1RM CALISTHENICS CALCULATOR) */}
             {activeModalSkill && (
                 <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 100 }}>
                     <div className="titanium-slab" style={{ width: "100%", maxWidth: "380px", padding: "24px" }}>
@@ -1135,6 +1212,20 @@ export default function CallilogApp() {
                                 />
                             </div>
 
+                            {/* Real-time Relative 1RM Load Feedback */}
+                            {live1RM && ballast > 0 && activeModalSkill.type === "dyn" && (
+                                <div style={{ background: "rgba(226, 167, 59, 0.08)", border: "1px solid rgba(226, 167, 59, 0.2)", padding: "10px 12px", borderRadius: "6px" }}>
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem" }}>
+                                        <span style={{ color: "#8A90A2" }}>Total System Mass:</span>
+                                        <span style={{ color: "#EDEDED", fontWeight: 700 }}>{live1RM.totalLoad} kg</span>
+                                    </div>
+                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", marginTop: "4px" }}>
+                                        <span style={{ color: "#E2A73B", fontWeight: 700 }}>Estimated 1RM Ballast:</span>
+                                        <span style={{ color: "#E2A73B", fontWeight: 800 }}>+{live1RM.est1RM} kg</span>
+                                    </div>
+                                </div>
+                            )}
+
                             <div>
                                 <label style={{ fontSize: "0.75rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
                                     PROOF URL (YOUTUBE / GOOGLE DRIVE)
@@ -1149,12 +1240,7 @@ export default function CallilogApp() {
                             </div>
 
                             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <input
-                                    type="checkbox"
-                                    id="is_public_cb"
-                                    checked={isPublic}
-                                    onChange={(e) => setIsPublic(e.target.checked)}
-                                />
+                                <input type="checkbox" id="is_public_cb" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} />
                                 <label htmlFor="is_public_cb" style={{ fontSize: "0.75rem", color: "#8A90A2", cursor: "pointer" }}>
                                     Public benchmark & proof
                                 </label>
@@ -1172,6 +1258,53 @@ export default function CallilogApp() {
                     </div>
                 </div>
             )}
+
+            {/* 13. NATIVE iOS FROSTED BOTTOM BAR */}
+            <div
+                style={{
+                    position: "fixed",
+                    bottom: 0,
+                    left: 0,
+                    right: 0,
+                    background: "rgba(10, 11, 14, 0.85)",
+                    backdropFilter: "blur(20px)",
+                    borderTop: "1px solid rgba(255, 255, 255, 0.08)",
+                    padding: "8px 16px max(8px, env(safe-area-inset-bottom))",
+                    display: "flex",
+                    justifyContent: "space-around",
+                    alignItems: "center",
+                    zIndex: 90,
+                }}
+            >
+                {[
+                    { id: "vault", icon: "🏛️", label: "Vault" },
+                    { id: "intel", icon: "🕸️", label: "Intel" },
+                    { id: "arena", icon: "🏆", label: "Arena" },
+                    { id: "admin", icon: "⚡", label: "Audit" },
+                ].map((item) => {
+                    const isActive = activeTab === item.id;
+                    return (
+                        <button
+                            key={item.id}
+                            onClick={() => setActiveTab(item.id as any)}
+                            style={{
+                                background: "none",
+                                border: "none",
+                                display: "flex",
+                                flexDirection: "column",
+                                alignItems: "center",
+                                gap: "2px",
+                                color: isActive ? "#E2A73B" : "#6C7282",
+                                cursor: "pointer",
+                                padding: "4px 12px",
+                            }}
+                        >
+                            <span style={{ fontSize: "1.15rem" }}>{item.icon}</span>
+                            <span style={{ fontSize: "0.68rem", fontWeight: isActive ? 800 : 600 }}>{item.label}</span>
+                        </button>
+                    );
+                })}
+            </div>
         </main>
     );
 }
