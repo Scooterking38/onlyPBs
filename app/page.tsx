@@ -486,36 +486,6 @@ export default function CallilogApp() {
                 )}
             </div>
 
-            {/* 3. DESKTOP NAVIGATION TRAY */}
-            <nav aria-label="Main sections" className="recessed-tray app-navigation" style={{ display: "flex", padding: "4px", gap: "4px", marginBottom: "16px" }}>
-                {(["vault", "intel", "arena", "admin"] as const).map((tab) => (
-                    <button
-                        key={tab}
-                        type="button"
-                        aria-pressed={activeTab === tab}
-                        onClick={() => setActiveTab(tab)}
-                        style={{
-                            flex: 1,
-                            padding: "9px 12px",
-                            fontSize: "0.8rem",
-                            fontWeight: 700,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.04em",
-                            borderRadius: "6px",
-                            border: activeTab === tab ? "1px solid rgba(255, 255, 255, 0.16)" : "1px solid transparent",
-                            background: activeTab === tab ? "linear-gradient(180deg, #1E202B 0%, #151722 100%)" : "transparent",
-                            color: activeTab === tab ? "#EDEDED" : "#6C7282",
-                            cursor: "pointer",
-                        }}
-                    >
-                        {tab === "vault" && "The Vault"}
-                        {tab === "intel" && "Deep Analytics"}
-                        {tab === "arena" && "The Arena"}
-                        {tab === "admin" && "Admin"}
-                    </button>
-                ))}
-            </nav>
-
             {/* 4. TAB 1: THE VAULT */}
             {activeTab === "vault" && (
                 <section>
