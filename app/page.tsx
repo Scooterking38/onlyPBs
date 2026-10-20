@@ -644,6 +644,72 @@ export default function CallilogApp() {
         await Promise.all([fetchPbs(), fetchLeaderboard(), fetchAdminPbs()]);
     };
 
+    // Delete Own Account
+    const handleDeleteOwnAccount = async () => {
+        if (!userEmail) return;
+        const confirmDelete = window.confirm(
+            "⚠️ PERMANENT ACCOUNT DELETION\n\nAre you sure you want to completely delete your account? All your personal bests, rank badges, and leaderboard entries will be permanently erased. This action CANNOT be undone."
+        );
+        if (!confirmDelete) return;
+
+        try {
+            const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(userEmail)}&requesterEmail=${encodeURIComponent(userEmail)}`), {
+                method: "DELETE",
+                headers: {
+                    "x-athlete-email": userEmail,
+                },
+            });
+
+            if (res.ok) {
+                // Try deleting from Firebase Auth (best-effort)
+                try {
+                    await user?.delete();
+                } catch {
+                    // Firebase requires recent login for user.delete(), logout still clears session
+                }
+                setShowProfileModal(false);
+                await handleSignOut();
+                alert("Your account and records have been completely deleted.");
+            } else {
+                const data = await res.json();
+                alert(data.error || "Failed to delete account. Please try again.");
+            }
+        } catch (err) {
+            console.error("Failed to delete account:", err);
+            alert("Error deleting account. Please check your network connection.");
+        }
+    };
+
+    // Admin Delete Other Athlete's Account
+    const handleAdminDeleteAthlete = async (targetEmail: string, targetName: string) => {
+        if (!isAdmin || !userEmail) return;
+        const confirmDelete = window.confirm(
+            `🛡️ FEDERATION ADMIN ACTION\n\nAre you sure you want to permanently remove athlete "${targetName}" (${targetEmail}) from the Callilog network?\n\nAll their PBs, leaderboard entries, and profile data will be permanently purged.`
+        );
+        if (!confirmDelete) return;
+
+        try {
+            const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(targetEmail)}&requesterEmail=${encodeURIComponent(userEmail)}`), {
+                method: "DELETE",
+                headers: {
+                    "x-athlete-email": userEmail,
+                },
+            });
+
+            if (res.ok) {
+                setInspectingAthlete(null);
+                await Promise.all([fetchLeaderboard(), fetchPbs(), fetchAdminPbs()]);
+                alert(`Athlete "${targetName}" has been successfully removed from the federation.`);
+            } else {
+                const data = await res.json();
+                alert(data.error || "Admin deletion failed.");
+            }
+        } catch (err) {
+            console.error("Admin deletion error:", err);
+            alert("Network error while deleting athlete.");
+        }
+    };
+    
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!userEmail) return;
@@ -1780,31 +1846,52 @@ export default function CallilogApp() {
                         </div>
 
                         {/* Footer */}
-                        <div style={{ display: "flex", gap: "8px" }}>
-                            {inspectingAthlete.email.toLowerCase() !== userEmail && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                            <div style={{ display: "flex", gap: "8px" }}>
+                                {inspectingAthlete.email.toLowerCase() !== userEmail && (
+                                    <button
+                                        onClick={() => {
+                                            const target = {
+                                                displayName: inspectingAthlete.displayName,
+                                                pbs: inspectingAthlete.rawPbs,
+                                                bw: inspectingAthlete.bw,
+                                            };
+                                            setInspectingAthlete(null);
+                                            setCompareTarget(target);
+                                        }}
+                                        className="btn-action"
+                                        style={{ flex: 1, padding: "10px", borderColor: "#38BDF8", color: "#38BDF8", fontWeight: 700 }}
+                                    >
+                                        ⚔️ Clash in Head-to-Head
+                                    </button>
+                                )}
                                 <button
-                                    onClick={() => {
-                                        const target = {
-                                            displayName: inspectingAthlete.displayName,
-                                            pbs: inspectingAthlete.rawPbs,
-                                            bw: inspectingAthlete.bw,
-                                        };
-                                        setInspectingAthlete(null);
-                                        setCompareTarget(target);
-                                    }}
-                                    className="btn-action"
-                                    style={{ flex: 1, padding: "10px", borderColor: "#38BDF8", color: "#38BDF8", fontWeight: 700 }}
+                                    onClick={() => setInspectingAthlete(null)}
+                                    className="btn-primary"
+                                    style={{ flex: 1, padding: "10px" }}
                                 >
-                                    ⚔️ Clash in Head-to-Head
+                                    Close Passport
+                                </button>
+                            </div>
+
+                            {/* Admin Account Removal Button */}
+                            {isAdmin && inspectingAthlete.email.toLowerCase() !== userEmail && (
+                                <button
+                                    onClick={() => handleAdminDeleteAthlete(inspectingAthlete.email, inspectingAthlete.displayName)}
+                                    style={{
+                                        background: "rgba(239, 68, 68, 0.12)",
+                                        border: "1px solid rgba(239, 68, 68, 0.4)",
+                                        color: "#EF4444",
+                                        borderRadius: "6px",
+                                        padding: "8px 12px",
+                                        fontSize: "0.75rem",
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    🛡️ Admin: Purge Athlete & All Records
                                 </button>
                             )}
-                            <button
-                                onClick={() => setInspectingAthlete(null)}
-                                className="btn-primary"
-                                style={{ flex: 1, padding: "10px" }}
-                            >
-                                Close Passport
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -1967,6 +2054,30 @@ export default function CallilogApp() {
                                 </label>
                             </div>
 
+                            {/* Danger Zone: Delete Own Account */}
+                            <div style={{ borderTop: "1px solid rgba(239, 68, 68, 0.2)", paddingTop: "14px", marginTop: "4px" }}>
+                                <div style={{ fontSize: "0.72rem", color: "#EF4444", fontWeight: 700, marginBottom: "6px" }}>
+                                    DANGER ZONE
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleDeleteOwnAccount}
+                                    style={{
+                                        width: "100%",
+                                        background: "rgba(239, 68, 68, 0.08)",
+                                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                                        color: "#F87171",
+                                        borderRadius: "6px",
+                                        padding: "8px 12px",
+                                        fontSize: "0.75rem",
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    🗑️ Permanently Delete My Account & Records
+                                </button>
+                            </div>
+                            
                             <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
                                 <button type="button" onClick={() => setShowProfileModal(false)} className="btn-action" style={{ flex: 1, padding: "10px" }}>
                                     Cancel
