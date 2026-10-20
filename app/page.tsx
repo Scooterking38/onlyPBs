@@ -46,6 +46,93 @@ const checkIsAdmin = (email: string | null | undefined): boolean => {
     return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
+// Converts Google Drive, Dropbox, and Imgur share links into direct raw image URLs
+function normalizeImageUrl(url?: string): string {
+    if (!url) return "";
+    const clean = url.trim();
+
+    // Google Drive share link -> direct CDN link
+    const gDriveMatch = clean.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/);
+    if (gDriveMatch && gDriveMatch[1]) {
+        return `https://lh3.googleusercontent.com/d/${gDriveMatch[1]}`;
+    }
+
+    // Dropbox share link -> raw image stream
+    if (clean.includes("dropbox.com")) {
+        return clean.replace(/[?&]dl=0/, "").replace(/\?raw=1$/, "") + "?raw=1";
+    }
+
+    // Imgur direct image resolution
+    if (/^https?:\/\/imgur\.com\/([a-zA-Z0-9]+)$/.test(clean)) {
+        return clean.replace("imgur.com", "i.imgur.com") + ".png";
+    }
+
+    return clean;
+}
+
+// Resilient Avatar with hotlink bypass and graceful fallback
+function AthleteAvatar({
+    url,
+    icon = "⚡",
+    size = 44,
+    fallbackPhoto,
+}: {
+    url?: string;
+    icon?: string;
+    size?: number;
+    fallbackPhoto?: string | null;
+}) {
+    const rawUrl = url?.trim() ? url.trim() : (fallbackPhoto || "");
+    const resolvedUrl = normalizeImageUrl(rawUrl);
+    const [imgFailed, setImgFailed] = useState(false);
+
+    useEffect(() => {
+        setImgFailed(false);
+    }, [resolvedUrl]);
+
+    if (resolvedUrl && !imgFailed) {
+        return (
+            <img
+                key={resolvedUrl}
+                src={resolvedUrl}
+                alt="Avatar"
+                referrerPolicy="no-referrer"
+                onError={() => setImgFailed(true)}
+                style={{
+                    width: `${size}px`,
+                    height: `${size}px`,
+                    borderRadius: "50%",
+                    objectFit: "cover",
+                    border: "1px solid rgba(255, 255, 255, 0.15)",
+                    background: "#181A22",
+                    display: "block",
+                    flexShrink: 0,
+                }}
+            />
+        );
+    }
+
+    return (
+        <div
+            style={{
+                width: `${size}px`,
+                height: `${size}px`,
+                borderRadius: "50%",
+                background: "#161822",
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: `${size * 0.45}px`,
+                flexShrink: 0,
+                userSelect: "none",
+            }}
+        >
+            {icon || "⚡"}
+        </div>
+    );
+}
+
 export default function CallilogApp() {
     // Auth & Active Athlete State
     const [user, setUser] = useState<User | null>(null);
@@ -178,15 +265,19 @@ export default function CallilogApp() {
             const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(userEmail)}`));
             if (res.ok) {
                 const data = await res.json();
-                setProfile(data);
+                const resolvedAvatar = data.avatar_url || data.avatarUrl || "";
+                setProfile({
+                    ...data,
+                    avatar_url: resolvedAvatar,
+                });
                 const defaultFallback = ADMIN_NAMES_MAP[userEmail] || user?.displayName || userEmail.split("@")[0];
-                setEditName(data.display_name || defaultFallback);
-                setEditBw(Number(data.bodyweight_kg) || 75.0);
+                setEditName(data.display_name || data.displayName || defaultFallback);
+                setEditBw(Number(data.bodyweight_kg || data.bodyweight) || 75.0);
                 setEditTagline(data.tagline || "");
                 setEditDiscipline(data.discipline || "Statics & Holds");
-                setEditIcon(data.avatar_icon || (checkIsAdmin(userEmail) ? "🛡️" : "⚡"));
-                setEditAvatarUrl(data.avatar_url || user?.photoURL || "");
-                setEditMasked(Boolean(data.is_masked));
+                setEditIcon(data.avatar_icon || data.avatarIcon || (checkIsAdmin(userEmail) ? "🛡️" : "⚡"));
+                setEditAvatarUrl(resolvedAvatar || user?.photoURL || "");
+                setEditMasked(Boolean(data.is_masked ?? data.isMasked));
             } else {
                 const defaultName = ADMIN_NAMES_MAP[userEmail] || user?.displayName || userEmail.split("@")[0];
                 setEditName(defaultName);
@@ -394,6 +485,7 @@ export default function CallilogApp() {
         if (!userEmail) return;
         const effectiveEmail = userEmail;
         const newBw = Number(editBw) || 75.0;
+        const cleanAvatarUrl = editAvatarUrl.trim();
 
         // Optimistically update local profile state
         setProfile((prev) => ({
@@ -404,7 +496,7 @@ export default function CallilogApp() {
             tagline: editTagline,
             discipline: editDiscipline,
             avatar_icon: editIcon,
-            avatar_url: editAvatarUrl,
+            avatar_url: cleanAvatarUrl,
             is_masked: editMasked,
         }));
 
@@ -418,12 +510,17 @@ export default function CallilogApp() {
                 body: JSON.stringify({
                     email: effectiveEmail,
                     displayName: editName,
+                    display_name: editName,
                     bodyweight: newBw,
+                    bodyweight_kg: newBw,
                     tagline: editTagline,
                     discipline: editDiscipline,
                     avatarIcon: editIcon,
-                    avatarUrl: editAvatarUrl,
+                    avatar_icon: editIcon,
+                    avatarUrl: cleanAvatarUrl,
+                    avatar_url: cleanAvatarUrl,
                     isMasked: editMasked,
+                    is_masked: editMasked,
                 }),
             });
         } catch (err) {
@@ -436,43 +533,7 @@ export default function CallilogApp() {
 
     // Avatar Renderer
     const renderAvatar = (url?: string, icon?: string, size = 44) => {
-        const resolvedUrl = url || user?.photoURL;
-        if (resolvedUrl && resolvedUrl.trim()) {
-            return (
-                <img
-                    src={resolvedUrl.trim()}
-                    alt="Avatar"
-                    style={{
-                        width: `${size}px`,
-                        height: `${size}px`,
-                        borderRadius: "50%",
-                        objectFit: "cover",
-                        border: "1px solid rgba(255, 255, 255, 0.15)",
-                        background: "#181A22",
-                    }}
-                    onError={(e) => {
-                        (e.target as HTMLElement).style.display = "none";
-                    }}
-                />
-            );
-        }
-        return (
-            <div
-                style={{
-                    width: `${size}px`,
-                    height: `${size}px`,
-                    borderRadius: "50%",
-                    background: "#161822",
-                    border: "1px solid rgba(255, 255, 255, 0.12)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: `${size * 0.45}px`,
-                }}
-            >
-                {icon || "⚡"}
-            </div>
-        );
+        return <AthleteAvatar url={url} icon={icon} size={size} fallbackPhoto={user?.photoURL} />;
     };
 
     // Radar points generator
