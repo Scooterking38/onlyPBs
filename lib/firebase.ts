@@ -1,6 +1,11 @@
 // lib/firebase.ts
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
+import { 
+  getAuth, 
+  GoogleAuthProvider, 
+  signInWithPopup, 
+  signOut 
+} from "firebase/auth";
 
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "AIzaSyB-oeQCCLGysUG4iuyFpcufMLouAtek4Xs",
@@ -11,27 +16,17 @@ const firebaseConfig = {
     appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID || "1:205557324481:web:c90e650b3493f005535240",
 };
 
-// Prevent re-initialization during Next.js hot reload / SSR cycles
-export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-
+// Initialize Firebase singleton
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-export const googleProvider = new GoogleAuthProvider();
+// Configure Google Provider
+const provider = new GoogleAuthProvider();
 
-export const login = async () => {
-    try {
-        return await signInWithPopup(auth, googleProvider);
-    } catch (error) {
-        console.error("Firebase sign-in error:", error);
-        throw error;
-    }
-};
+// 🔥 FORCES GOOGLE TO SHOW THE ACCOUNT CHOOSER EVERY TIME:
+provider.setCustomParameters({
+  prompt: "select_account",
+});
 
-export const logout = async () => {
-    try {
-        return await signOut(auth);
-    } catch (error) {
-        console.error("Firebase sign-out error:", error);
-        throw error;
-    }
-};
+export const login = () => signInWithPopup(auth, provider);
+export const logout = () => signOut(auth);
