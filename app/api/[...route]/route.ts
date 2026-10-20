@@ -31,7 +31,7 @@ export async function GET(
 
   try {
     // ----------------------------------------------------
-    // GET /api/debug -> Verify DB connection & contents
+    // GET /api/debug -> Verify DB connection & counts
     // ----------------------------------------------------
     if (endpoint === "debug") {
       const athletes = await query<AthleteRow>("SELECT * FROM athletes");
@@ -43,8 +43,8 @@ export async function GET(
         status: "online",
         databaseType: hasDbUrl ? "PostgreSQL (Shared Cloud Database)" : "Local File (callilog_db.json)",
         note: hasDbUrl
-          ? "Connected to cloud database. All users share the same data."
-          : "Using local file. If deployed on Vercel, you must set DATABASE_URL in Vercel settings so users can see each other.",
+          ? "Connected to cloud database. All users share the same records."
+          : "Using local JSON file. If deployed on Vercel, add DATABASE_URL in Vercel Project Settings so all devices see each other.",
         totalAthletes: athletes.length,
         totalPbs: pbs.length,
         pendingAuditCount: pendingPbs.length,
@@ -278,7 +278,6 @@ export async function POST(
       const avatarUrl = String(body.avatarUrl || body.avatar_url || "").trim();
       const isMasked = Boolean(body.isMasked ?? body.is_masked);
 
-      // Check if athlete exists first (no ON CONFLICT crash risks)
       const existing = await query<AthleteRow>(
         "SELECT id FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1",
         [email]
@@ -321,7 +320,7 @@ export async function POST(
       const proofUrl = String(body.proofUrl || body.proof_url || "").trim();
       const isPublic = body.isPublic !== false && body.is_public_proof !== false;
       
-      // If proof URL is provided, it goes directly to the admin verification queue!
+      // If proof URL is provided, it goes to the admin verification queue!
       const status = proofUrl ? "pending" : "unverified";
 
       // 1. Ensure athlete row exists
