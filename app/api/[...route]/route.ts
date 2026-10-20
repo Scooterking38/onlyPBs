@@ -31,6 +31,54 @@ export async function GET(
 
   try {
     // ----------------------------------------------------
+    // GET /api/video?url=... -> Streams video & bypasses CORS/iFrame blocks
+    // ----------------------------------------------------
+    if (endpoint === "video") {
+      const targetUrl = searchParams.get("url");
+      if (!targetUrl) {
+        return NextResponse.json({ error: "Missing video url" }, { status: 400 });
+      }
+
+      let fetchUrl = targetUrl.trim();
+
+      // Normalize Google Drive links into direct binary download URLs
+      const gDriveMatch = fetchUrl.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?id=)([a-zA-Z0-9_-]+)/);
+      if (gDriveMatch && gDriveMatch[1]) {
+        fetchUrl = `https://drive.google.com/uc?export=download&id=${gDriveMatch[1]}&confirm=t`;
+      } else if (fetchUrl.includes("dropbox.com")) {
+        fetchUrl = fetchUrl.replace(/[?&]dl=0/, "").replace(/\?raw=1$/, "") + "?raw=1";
+      }
+
+      const upstream = await fetch(fetchUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        redirect: "follow",
+      });
+
+      if (!upstream.ok) {
+        return NextResponse.json(
+          { error: `Upstream video source returned status ${upstream.status}` },
+          { status: upstream.status }
+        );
+      }
+
+      const contentType = upstream.headers.get("content-type") || "video/mp4";
+      const contentLength = upstream.headers.get("content-length");
+
+      const responseHeaders = new Headers();
+      responseHeaders.set("Content-Type", contentType);
+      if (contentLength) responseHeaders.set("Content-Length", contentLength);
+      responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate");
+      responseHeaders.set("Access-Control-Allow-Origin", "*");
+
+      return new NextResponse(upstream.body, {
+        status: 200,
+        headers: responseHeaders,
+      });
+    }
+
+    // ----------------------------------------------------
     // GET /api/debug -> Verify DB connection & counts
     // ----------------------------------------------------
     if (endpoint === "debug") {
@@ -127,7 +175,6 @@ export async function GET(
       const athletes = await query<AthleteRow>("SELECT * FROM athletes");
       const pbs = await query<PBRow>("SELECT * FROM pbs");
 
-      // Group PBs by athlete email
       const pbsByEmail = new Map<string, PBRow[]>();
       pbs.forEach((pb) => {
         const em = pb.email.toLowerCase().trim();
@@ -135,7 +182,6 @@ export async function GET(
         pbsByEmail.get(em)!.push(pb);
       });
 
-      // Also ensure any email found in PBs is represented even if athletes table missed it
       const athleteEmails = new Set(athletes.map((a) => a.email.toLowerCase().trim()));
       pbsByEmail.forEach((_, email) => {
         if (!athleteEmails.has(email)) {
@@ -224,7 +270,6 @@ export async function GET(
         return NextResponse.json({ isAdmin: false, pending: [] }, { status: 403 });
       }
 
-      // Return all submissions waiting for video proof review
       const pending = await query<any>(`
         SELECT 
           p.*,
@@ -320,10 +365,8 @@ export async function POST(
       const proofUrl = String(body.proofUrl || body.proof_url || "").trim();
       const isPublic = body.isPublic !== false && body.is_public_proof !== false;
       
-      // If proof URL is provided, it goes to the admin verification queue!
       const status = proofUrl ? "pending" : "unverified";
 
-      // 1. Ensure athlete row exists
       const ath = await query<AthleteRow>("SELECT id FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1", [email]);
       if (ath.length === 0) {
         await query(
@@ -335,10 +378,8 @@ export async function POST(
         await query("UPDATE athletes SET bodyweight_kg = $1 WHERE LOWER(email) = LOWER($2)", [bw, email]);
       }
 
-      // 2. Remove prior record for this skill
       await query("DELETE FROM pbs WHERE LOWER(email) = LOWER($1) AND skill_id = $2", [email, skillId]);
 
-      // 3. Insert new PB (status = 'pending' if proof URL was provided)
       const result = await query<{ id: number }>(
         `INSERT INTO pbs (email, skill_id, bodyweight_at_time, weight, reps, duration, proof_url, is_public_proof, is_verified, verification_status, date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, CURRENT_DATE)
