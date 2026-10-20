@@ -130,6 +130,157 @@ function AthleteAvatar({
     );
 }
 
+// High-Reliability Video Modal:
+// Buffers raw video file to a temporary in-memory Blob, plays in native HTML5 player,
+// and deletes it from browser cache/memory as soon as the modal is closed.
+function ProofVideoModal({
+    url,
+    onClose,
+}: {
+    url: string;
+    onClose: () => void;
+}) {
+    const [isLoading, setIsLoading] = useState(true);
+    const [blobUrl, setBlobUrl] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const isYouTube = Boolean(getYouTubeEmbedUrl(url));
+
+    useEffect(() => {
+        if (!url || isYouTube) {
+            setIsLoading(false);
+            return;
+        }
+
+        setIsLoading(true);
+        setError(null);
+        let activeBlob: string | null = null;
+        const controller = new AbortController();
+
+        async function fetchAndBuffer() {
+            try {
+                const proxyUrl = apiUrl(`/api/video?url=${encodeURIComponent(url)}`);
+                const response = await fetch(proxyUrl, { signal: controller.signal });
+
+                if (!response.ok) {
+                    throw new Error(
+                        response.status === 403 || response.status === 401
+                            ? "This file is restricted. Ensure Google Drive link sharing is set to 'Anyone with the link can view'."
+                            : `Could not retrieve video stream (HTTP ${response.status})`
+                    );
+                }
+
+                const blob = await response.blob();
+                if (blob.size === 0 || blob.type.includes("text/html")) {
+                    throw new Error("Unable to download raw video. Google Drive file might be private or require sign-in.");
+                }
+
+                activeBlob = URL.createObjectURL(blob);
+                setBlobUrl(activeBlob);
+                setIsLoading(false);
+            } catch (err: any) {
+                if (err.name !== "AbortError") {
+                    console.error("Video buffering error:", err);
+                    setError(err.message || "Failed to load video proof");
+                    setIsLoading(false);
+                }
+            }
+        }
+
+        fetchAndBuffer();
+
+        // CLEANUP: Automatically revokes blob and wipes video from memory/cache
+        return () => {
+            controller.abort();
+            if (activeBlob) {
+                URL.revokeObjectURL(activeBlob);
+            }
+        };
+    }, [url, isYouTube]);
+
+    return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.92)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 140 }}>
+            <div className="titanium-slab" style={{ width: "100%", maxWidth: "640px", padding: "20px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#E2A73B" }}>
+                            CERTIFIED PROOF PLAYBACK
+                        </span>
+                        {!isYouTube && !isLoading && !error && (
+                            <span style={{ fontSize: "0.65rem", background: "rgba(16, 185, 129, 0.15)", color: "#10B981", border: "1px solid rgba(16, 185, 129, 0.3)", borderRadius: "4px", padding: "1px 6px", fontWeight: 700 }}>
+                                ⚡ BUFFERED TO MEMORY
+                            </span>
+                        )}
+                    </div>
+                    <button
+                        onClick={onClose}
+                        style={{ background: "none", border: "none", color: "#EDEDED", cursor: "pointer", fontSize: "1.2rem", padding: "4px" }}
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                {isYouTube ? (
+                    <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "8px" }}>
+                        <iframe
+                            src={getYouTubeEmbedUrl(url)!}
+                            title="Proof Video"
+                            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                            allowFullScreen
+                        />
+                    </div>
+                ) : isLoading ? (
+                    <div style={{ padding: "50px 20px", textAlign: "center", background: "#0E1015", borderRadius: "8px", border: "1px solid rgba(255, 255, 255, 0.06)" }}>
+                        <div style={{ fontSize: "2rem", marginBottom: "12px", animation: "spin 1.5s linear infinite" }}>⚡</div>
+                        <div style={{ fontSize: "0.95rem", fontWeight: 700, color: "#EDEDED", marginBottom: "4px" }}>
+                            Streaming & Buffering Proof Video...
+                        </div>
+                        <div style={{ fontSize: "0.75rem", color: "#6C7282" }}>
+                            Bypassing Google player restrictions and loading video directly to RAM
+                        </div>
+                    </div>
+                ) : error ? (
+                    <div style={{ padding: "30px 20px", textAlign: "center", background: "#0E1015", borderRadius: "8px", border: "1px solid rgba(239, 68, 68, 0.25)" }}>
+                        <div style={{ fontSize: "1.8rem", marginBottom: "8px" }}>⚠️</div>
+                        <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "#FCA5A5", marginBottom: "6px" }}>
+                            Playback Notice
+                        </div>
+                        <p style={{ fontSize: "0.78rem", color: "#9CA3AF", maxWidth: "420px", margin: "0 auto 16px auto", lineHeight: 1.5 }}>
+                            {error}
+                        </p>
+                        <a
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn-primary"
+                            style={{ display: "inline-block", padding: "8px 16px", fontSize: "0.8rem" }}
+                        >
+                            Open Link in New Tab ↗
+                        </a>
+                    </div>
+                ) : blobUrl ? (
+                    <div style={{ borderRadius: "8px", overflow: "hidden", background: "#000" }}>
+                        <video
+                            src={blobUrl}
+                            controls
+                            autoPlay
+                            playsInline
+                            style={{ width: "100%", maxHeight: "420px", display: "block" }}
+                        />
+                    </div>
+                ) : null}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "12px", fontSize: "0.72rem", color: "#6C7282" }}>
+                    <span>Video will be automatically flushed from device memory on close.</span>
+                    <a href={url} target="_blank" rel="noreferrer" style={{ color: "#E2A73B", textDecoration: "underline" }}>
+                        Original Link ↗
+                    </a>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function CallilogApp() {
     // Auth & Active Athlete State
     const [user, setUser] = useState<User | null>(null);
@@ -1659,35 +1810,12 @@ export default function CallilogApp() {
                 </div>
             )}
 
-            {/* 9. MODAL: IN-APP VIDEO PROOF PLAYER */}
+            {/* 9. MODAL: IN-APP VIDEO PROOF PLAYER (Auto-buffered & auto-purged from memory) */}
             {previewVideoUrl && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 140 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "560px", padding: "20px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                            <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#E2A73B" }}>CERTIFIED PROOF PLAYBACK</span>
-                            <button onClick={() => setPreviewVideoUrl(null)} style={{ background: "none", border: "none", color: "#EDEDED", cursor: "pointer", fontSize: "1.1rem" }}>✕</button>
-                        </div>
-
-                        {getYouTubeEmbedUrl(previewVideoUrl) ? (
-                            <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "8px" }}>
-                                <iframe
-                                    src={getYouTubeEmbedUrl(previewVideoUrl)!}
-                                    title="Proof Video"
-                                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                />
-                            </div>
-                        ) : (
-                            <div style={{ padding: "30px 20px", textAlign: "center", background: "#0E1015", borderRadius: "8px" }}>
-                                <p style={{ fontSize: "0.85rem", color: "#8A90A2", marginBottom: "12px" }}>External Video / Drive Link</p>
-                                <a href={previewVideoUrl} target="_blank" rel="noreferrer" className="btn-primary" style={{ display: "inline-block", padding: "8px 16px" }}>
-                                    Open Proof in New Tab ↗
-                                </a>
-                            </div>
-                        )}
-                    </div>
-                </div>
+                <ProofVideoModal
+                    url={previewVideoUrl}
+                    onClose={() => setPreviewVideoUrl(null)}
+                />
             )}
 
             {/* 10. MODAL: EXPORTABLE HD FIGHTER CARD */}
