@@ -1,3 +1,4 @@
+// app/api/[...route]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { query, AthleteRow, PBRow } from "@/lib/db";
 import { computeDualELO, getRankBadge, scoreSinglePB, PBRecord } from "@/lib/elo";
@@ -30,6 +31,28 @@ export async function GET(
 
   try {
     // ----------------------------------------------------
+    // GET /api/debug -> Verify DB connection & contents
+    // ----------------------------------------------------
+    if (endpoint === "debug") {
+      const athletes = await query<AthleteRow>("SELECT * FROM athletes");
+      const pbs = await query<PBRow>("SELECT * FROM pbs");
+      const pendingPbs = pbs.filter((p) => p.verification_status === "pending");
+      const hasDbUrl = Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
+
+      return NextResponse.json({
+        status: "online",
+        databaseType: hasDbUrl ? "PostgreSQL (Shared Cloud Database)" : "Local File (callilog_db.json)",
+        note: hasDbUrl
+          ? "Connected to cloud database. All users share the same data."
+          : "Using local file. If deployed on Vercel, you must set DATABASE_URL in Vercel settings so users can see each other.",
+        totalAthletes: athletes.length,
+        totalPbs: pbs.length,
+        pendingAuditCount: pendingPbs.length,
+        registeredAthletes: athletes.map((a) => ({ id: a.id, email: a.email, name: a.display_name, bw: a.bodyweight_kg })),
+      });
+    }
+
+    // ----------------------------------------------------
     // GET /api/profile?email=...
     // ----------------------------------------------------
     if (endpoint === "profile") {
@@ -38,27 +61,29 @@ export async function GET(
         return NextResponse.json({ error: "Missing email parameter" }, { status: 400 });
       }
 
-      const rows = await query<AthleteRow>(
+      let rows = await query<AthleteRow>(
         "SELECT * FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1",
         [email]
       );
 
-      if (rows.length > 0) {
-        return NextResponse.json(rows[0]);
+      // AUTO-REGISTER: The moment any real user logs in, persist them into the database
+      if (rows.length === 0) {
+        const fallbackName = ADMIN_NAMES_MAP[email] || email.split("@")[0];
+        const icon = checkIsAdmin(email) ? "🛡️" : "⚡";
+
+        await query(
+          `INSERT INTO athletes (email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked)
+           VALUES ($1, $2, 75.0, 'Gravity is just a suggestion.', 'Statics & Holds', $3, '', false)`,
+          [email, fallbackName, icon]
+        );
+
+        rows = await query<AthleteRow>(
+          "SELECT * FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1",
+          [email]
+        );
       }
 
-      // Return initial defaults if not found
-      const fallbackName = ADMIN_NAMES_MAP[email] || email.split("@")[0];
-      return NextResponse.json({
-        email,
-        display_name: fallbackName,
-        bodyweight_kg: 75.0,
-        tagline: "Gravity is just a suggestion.",
-        discipline: "Statics & Holds",
-        avatar_icon: checkIsAdmin(email) ? "🛡️" : "⚡",
-        avatar_url: "",
-        is_masked: false,
-      });
+      return NextResponse.json(rows[0]);
     }
 
     // ----------------------------------------------------
@@ -76,7 +101,7 @@ export async function GET(
         return NextResponse.json(rows);
       }
 
-      // Public PBs with attached athlete details
+      // Public PBs joined with athlete information
       const rows = await query<any>(`
         SELECT 
           p.*,
@@ -102,7 +127,7 @@ export async function GET(
       const athletes = await query<AthleteRow>("SELECT * FROM athletes");
       const pbs = await query<PBRow>("SELECT * FROM pbs");
 
-      // Group PBs by email
+      // Group PBs by athlete email
       const pbsByEmail = new Map<string, PBRow[]>();
       pbs.forEach((pb) => {
         const em = pb.email.toLowerCase().trim();
@@ -110,12 +135,29 @@ export async function GET(
         pbsByEmail.get(em)!.push(pb);
       });
 
-      // Build leaderboard entries
+      // Also ensure any email found in PBs is represented even if athletes table missed it
+      const athleteEmails = new Set(athletes.map((a) => a.email.toLowerCase().trim()));
+      pbsByEmail.forEach((_, email) => {
+        if (!athleteEmails.has(email)) {
+          athletes.push({
+            id: 0,
+            email,
+            display_name: ADMIN_NAMES_MAP[email] || email.split("@")[0],
+            bodyweight_kg: 75.0,
+            tagline: "",
+            discipline: "Statics & Holds",
+            avatar_icon: checkIsAdmin(email) ? "🛡️" : "⚡",
+            avatar_url: "",
+            is_masked: false,
+          });
+        }
+      });
+
       const leaderboard = athletes
         .filter((ath) => {
           const isMe = ath.email.toLowerCase().trim() === viewerEmail;
           if (isMe) return true;
-          // Ghost profiles are only visible to Admins
+          // Ghost profiles are strictly visible only to Admins
           if (ath.is_masked && !isViewerAdmin) return false;
           return true;
         })
@@ -134,7 +176,6 @@ export async function GET(
           const badge = getRankBadge(officialELO);
           const verifiedCount = athPbs.filter((p) => p.is_verified).length;
 
-          // Compute top feats
           const topFeats = athPbs
             .map((p) => {
               const meta = SKILLS.find((s) => s.id === p.skill_id);
@@ -183,6 +224,7 @@ export async function GET(
         return NextResponse.json({ isAdmin: false, pending: [] }, { status: 403 });
       }
 
+      // Return all submissions waiting for video proof review
       const pending = await query<any>(`
         SELECT 
           p.*,
@@ -236,22 +278,29 @@ export async function POST(
       const avatarUrl = String(body.avatarUrl || body.avatar_url || "").trim();
       const isMasked = Boolean(body.isMasked ?? body.is_masked);
 
-      const saved = await query<AthleteRow>(
-        `INSERT INTO athletes (email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         ON CONFLICT (email) DO UPDATE SET
-           display_name = EXCLUDED.display_name,
-           bodyweight_kg = EXCLUDED.bodyweight_kg,
-           tagline = EXCLUDED.tagline,
-           discipline = EXCLUDED.discipline,
-           avatar_icon = EXCLUDED.avatar_icon,
-           avatar_url = EXCLUDED.avatar_url,
-           is_masked = EXCLUDED.is_masked
-         RETURNING *`,
-        [email, displayName, bw, tagline, discipline, avatarIcon, avatarUrl, isMasked]
+      // Check if athlete exists first (no ON CONFLICT crash risks)
+      const existing = await query<AthleteRow>(
+        "SELECT id FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1",
+        [email]
       );
 
-      return NextResponse.json({ success: true, profile: saved[0] });
+      if (existing.length > 0) {
+        await query(
+          `UPDATE athletes 
+           SET display_name = $2, bodyweight_kg = $3, tagline = $4, discipline = $5, avatar_icon = $6, avatar_url = $7, is_masked = $8
+           WHERE LOWER(email) = LOWER($1)`,
+          [email, displayName, bw, tagline, discipline, avatarIcon, avatarUrl, isMasked]
+        );
+      } else {
+        await query(
+          `INSERT INTO athletes (email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [email, displayName, bw, tagline, discipline, avatarIcon, avatarUrl, isMasked]
+        );
+      }
+
+      const updated = await query<AthleteRow>("SELECT * FROM athletes WHERE LOWER(email) = LOWER($1)", [email]);
+      return NextResponse.json({ success: true, profile: updated[0] });
     }
 
     // ----------------------------------------------------
@@ -271,12 +320,26 @@ export async function POST(
       const duration = Number(body.duration) || 0;
       const proofUrl = String(body.proofUrl || body.proof_url || "").trim();
       const isPublic = body.isPublic !== false && body.is_public_proof !== false;
+      
+      // If proof URL is provided, it goes directly to the admin verification queue!
       const status = proofUrl ? "pending" : "unverified";
 
-      // 1. Remove prior personal record for this specific skill
+      // 1. Ensure athlete row exists
+      const ath = await query<AthleteRow>("SELECT id FROM athletes WHERE LOWER(email) = LOWER($1) LIMIT 1", [email]);
+      if (ath.length === 0) {
+        await query(
+          `INSERT INTO athletes (email, display_name, bodyweight_kg, tagline, discipline, avatar_icon, avatar_url, is_masked)
+           VALUES ($1, $2, $3, '', 'Statics & Holds', $4, '', false)`,
+          [email, ADMIN_NAMES_MAP[email] || email.split("@")[0], bw, checkIsAdmin(email) ? "🛡️" : "⚡"]
+        );
+      } else {
+        await query("UPDATE athletes SET bodyweight_kg = $1 WHERE LOWER(email) = LOWER($2)", [bw, email]);
+      }
+
+      // 2. Remove prior record for this skill
       await query("DELETE FROM pbs WHERE LOWER(email) = LOWER($1) AND skill_id = $2", [email, skillId]);
 
-      // 2. Insert new record
+      // 3. Insert new PB (status = 'pending' if proof URL was provided)
       const result = await query<{ id: number }>(
         `INSERT INTO pbs (email, skill_id, bodyweight_at_time, weight, reps, duration, proof_url, is_public_proof, is_verified, verification_status, date)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, CURRENT_DATE)
@@ -284,10 +347,7 @@ export async function POST(
         [email, skillId, bw, weight, reps, duration, proofUrl, isPublic, status]
       );
 
-      // 3. Keep athlete bodyweight in sync
-      await query("UPDATE athletes SET bodyweight_kg = $1 WHERE LOWER(email) = LOWER($2)", [bw, email]);
-
-      return NextResponse.json({ success: true, pbId: result[0]?.id });
+      return NextResponse.json({ success: true, pbId: result[0]?.id, status });
     }
 
     // ----------------------------------------------------
@@ -299,13 +359,12 @@ export async function POST(
       if (action === "verify" && pbId) {
         const isApproved = Boolean(approved);
         const status = isApproved ? "verified" : "rejected";
-        const rejectionReason = reason || "";
 
         await query(
           `UPDATE pbs 
            SET is_verified = $1, verification_status = $2, rejection_reason = $3 
            WHERE id = $4`,
-          [isApproved, status, rejectionReason, Number(pbId)]
+          [isApproved, status, reason || "", Number(pbId)]
         );
 
         return NextResponse.json({ success: true, status });
