@@ -41,8 +41,50 @@ function getFirebaseAdminApp() {
 }
 
 /**
- * Returns a verified, email-verified user or falls back gracefully to
- * header/cookie/param credentials in local/preview environments.
+ * The 4 official auto-admin emails and their default Admin 1 through 4 titles.
+ */
+export const ADMIN_MAP: Record<string, string> = {
+  "mrwe3838@gmail.com": "Admin 1",
+  "elijaharagonmorgan@gmail.com": "Admin 2",
+  "station3828@gmail.com": "Admin 3",
+  "2morgane@queenelizabeths.derbyshire.sch.uk": "Admin 4",
+};
+
+export const ADMIN_EMAILS = Object.keys(ADMIN_MAP);
+
+export function isAdminEmail(email: string | undefined): boolean {
+  if (!email) return false;
+  const clean = email.trim().toLowerCase();
+
+  if (ADMIN_EMAILS.includes(clean)) return true;
+
+  const configured = (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  return configured.includes(clean);
+}
+
+export function getDefaultDisplayName(email: string | undefined, fallbackName?: string): string {
+  if (!email) return "Athlete";
+  const clean = email.trim().toLowerCase();
+
+  if (ADMIN_MAP[clean]) {
+    return ADMIN_MAP[clean];
+  }
+
+  if (fallbackName && fallbackName.trim() && !fallbackName.startsWith("Admin ")) {
+    return fallbackName.trim();
+  }
+
+  const handle = clean.split("@")[0];
+  return handle ? handle.charAt(0).toUpperCase() + handle.slice(1) : "Athlete";
+}
+
+/**
+ * Returns a verified user from Firebase ID token, or from
+ * request headers/query in local/preview environments.
  */
 export async function getRequestUser(
   request: Request
@@ -59,12 +101,12 @@ export async function getRequestUser(
           return decoded;
         }
       } catch {
-        // Fall through to header fallback
+        // Fall through to header inspection
       }
     }
   }
 
-  // Resilient fallback for AI Studio preview & local development:
+  // Resilient fallback for AI Studio preview & client requests:
   // Check x-athlete-email header or URL query parameter
   const headerEmail =
     request.headers.get("x-athlete-email") ||
@@ -84,9 +126,8 @@ export async function getRequestUser(
     }
   }
 
-  // Default fallback user if no specific email is provided
   if (!parsedEmail) {
-    parsedEmail = "admin1@callilog.app";
+    return null;
   }
 
   const defaultDisplayName = getDefaultDisplayName(parsedEmail);
@@ -104,51 +145,4 @@ export async function getRequestUser(
     sub: `user_${parsedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`,
     firebase: { identities: {}, sign_in_provider: "custom" },
   } as DecodedIdToken;
-}
-
-export const ADMIN_EMAILS = [
-  "admin1@callilog.app",
-  "admin2@callilog.app",
-  "admin3@callilog.app",
-  "admin4@callilog.app",
-  "admin@callilog.app",
-  "mrwe3838@gmail.com",
-];
-
-export function isAdminEmail(email: string | undefined): boolean {
-  if (!email) return false;
-  const clean = email.trim().toLowerCase();
-
-  if (ADMIN_EMAILS.includes(clean)) return true;
-  if (/^admin[1-4]@/i.test(clean)) return true;
-
-  const configured = (process.env.ADMIN_EMAILS || "")
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-
-  return configured.includes(clean);
-}
-
-export function getDefaultDisplayName(email: string | undefined, fallbackName?: string): string {
-  if (!email) return "Admin 1";
-  const clean = email.trim().toLowerCase();
-
-  if (clean === "admin1@callilog.app" || clean === "mrwe3838@gmail.com" || clean === "admin@callilog.app") {
-    return "Admin 1";
-  }
-  if (clean === "admin2@callilog.app") return "Admin 2";
-  if (clean === "admin3@callilog.app") return "Admin 3";
-  if (clean === "admin4@callilog.app") return "Admin 4";
-  if (/^admin1@/i.test(clean)) return "Admin 1";
-  if (/^admin2@/i.test(clean)) return "Admin 2";
-  if (/^admin3@/i.test(clean)) return "Admin 3";
-  if (/^admin4@/i.test(clean)) return "Admin 4";
-
-  if (fallbackName && fallbackName.trim() && fallbackName !== "ScooterKing") {
-    return fallbackName.trim();
-  }
-
-  const handle = clean.split("@")[0];
-  return handle ? handle.charAt(0).toUpperCase() + handle.slice(1) : "Athlete";
 }

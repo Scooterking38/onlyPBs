@@ -43,52 +43,7 @@ interface DataStore {
   pbs: PBRow[];
 }
 
-export const SEED_ATHLETES: AthleteRow[] = [
-  {
-    id: 1,
-    email: "admin1@callilog.app",
-    display_name: "Admin 1",
-    bodyweight_kg: 75.0,
-    tagline: "Callilog Official",
-    discipline: "All Round Calisthenics",
-    avatar_icon: "🛡️",
-    avatar_url: "",
-    is_masked: false,
-  },
-  {
-    id: 2,
-    email: "admin2@callilog.app",
-    display_name: "Admin 2",
-    bodyweight_kg: 75.0,
-    tagline: "Callilog Official",
-    discipline: "All Round Calisthenics",
-    avatar_icon: "🛡️",
-    avatar_url: "",
-    is_masked: false,
-  },
-  {
-    id: 3,
-    email: "admin3@callilog.app",
-    display_name: "Admin 3",
-    bodyweight_kg: 75.0,
-    tagline: "Callilog Official",
-    discipline: "All Round Calisthenics",
-    avatar_icon: "🛡️",
-    avatar_url: "",
-    is_masked: false,
-  },
-  {
-    id: 4,
-    email: "admin4@callilog.app",
-    display_name: "Admin 4",
-    bodyweight_kg: 75.0,
-    tagline: "Callilog Official",
-    discipline: "All Round Calisthenics",
-    avatar_icon: "🛡️",
-    avatar_url: "",
-    is_masked: false,
-  },
-];
+export const SEED_ATHLETES: AthleteRow[] = [];
 
 // No fake demo PBs - only real user / verified submissions
 export const SEED_PBS: PBRow[] = [];
@@ -97,50 +52,38 @@ const DISK_FILE = path.join("/tmp", "callilog_db.json");
 const LOCAL_BACKUP_FILE = path.join(process.cwd(), "callilog_db.json");
 
 const FORBIDDEN_DEMO_EMAILS = [
+  "admin1@callilog.app",
+  "admin2@callilog.app",
+  "admin3@callilog.app",
+  "admin4@callilog.app",
+  "admin@callilog.app",
   "viktor@calisthenics.pro",
   "marcus@ironcross.io",
   "elena@straddle.fit",
   "alex@streetworkout.org",
 ];
 
+const ADMIN_NAMES_MAP: Record<string, string> = {
+  "mrwe3838@gmail.com": "Admin 1",
+  "elijaharagonmorgan@gmail.com": "Admin 2",
+  "station3828@gmail.com": "Admin 3",
+  "2morgane@queenelizabeths.derbyshire.sch.uk": "Admin 4",
+};
+
 function sanitizeStore(store: DataStore): DataStore {
   // 1. Remove all old demo accounts and their PBs
   store.athletes = store.athletes.filter(
-    (a) => !FORBIDDEN_DEMO_EMAILS.includes(a.email.toLowerCase())
+    (a) => !FORBIDDEN_DEMO_EMAILS.includes(a.email.toLowerCase().trim())
   );
   store.pbs = store.pbs.filter(
-    (p) => !FORBIDDEN_DEMO_EMAILS.includes(p.email.toLowerCase())
+    (p) => !FORBIDDEN_DEMO_EMAILS.includes(p.email.toLowerCase().trim())
   );
 
-  // 2. Ensure Admin accounts are named Admin 1 through 4
+  // 2. Ensure Admin accounts default to Admin 1 through 4 if they don't have a customized name
   for (const ath of store.athletes) {
     const em = ath.email.toLowerCase().trim();
-    if (em === "admin1@callilog.app" || em === "mrwe3838@gmail.com") {
-      if (ath.display_name === "ScooterKing" || !ath.display_name) {
-        ath.display_name = "Admin 1";
-      }
-    } else if (em === "admin2@callilog.app") {
-      ath.display_name = "Admin 2";
-    } else if (em === "admin3@callilog.app") {
-      ath.display_name = "Admin 3";
-    } else if (em === "admin4@callilog.app") {
-      ath.display_name = "Admin 4";
-    }
-  }
-
-  // 3. Ensure Admin 1 through 4 exist in the athlete roster
-  const existingEmails = new Set(store.athletes.map((a) => a.email.toLowerCase()));
-  for (const seed of SEED_ATHLETES) {
-    if (!existingEmails.has(seed.email.toLowerCase())) {
-      store.athletes.push({ ...seed, id: ++store.athleteSeq });
-    }
-  }
-
-  // Deduplicate: if admin1@callilog.app is present and mrwe3838 has no PBs, remove mrwe3838 duplicate
-  if (store.athletes.some((a) => a.email.toLowerCase() === "admin1@callilog.app")) {
-    const hasPbs = store.pbs.some((p) => p.email.toLowerCase() === "mrwe3838@gmail.com");
-    if (!hasPbs) {
-      store.athletes = store.athletes.filter((a) => a.email.toLowerCase() !== "mrwe3838@gmail.com");
+    if (ADMIN_NAMES_MAP[em] && (!ath.display_name || ath.display_name === "ScooterKing" || ath.display_name === "Athlete")) {
+      ath.display_name = ADMIN_NAMES_MAP[em];
     }
   }
 
@@ -165,14 +108,14 @@ function loadStore(): DataStore {
       }
     }
   } catch (err) {
-    console.warn("[Database] Could not read disk store, initializing seed data:", err);
+    console.warn("[Database] Could not read disk store, initializing empty store:", err);
   }
 
   const fresh: DataStore = {
-    athleteSeq: 10,
-    pbSeq: 10,
-    athletes: [...SEED_ATHLETES],
-    pbs: [...SEED_PBS],
+    athleteSeq: 0,
+    pbSeq: 0,
+    athletes: [],
+    pbs: [],
   };
   saveStore(fresh);
   return fresh;

@@ -1,51 +1,6 @@
 {
-  "athleteSeq": 10,
-  "pbSeq": 10,
-  "athletes": [
-    {
-      "id": 1,
-      "email": "admin1@callilog.app",
-      "display_name": "Admin 1",
-      "bodyweight_kg": 75,
-      "tagline": "Callilog Official",
-      "discipline": "All Round Calisthenics",
-      "avatar_icon": "🛡️",
-      "avatar_url": "",
-      "is_masked": false
-    },
-    {
-      "id": 2,
-      "email": "admin2@callilog.app",
-      "display_name": "Admin 2",
-      "bodyweight_kg": 75,
-      "tagline": "Callilog Official",
-      "discipline": "All Round Calisthenics",
-      "avatar_icon": "🛡️",
-      "avatar_url": "",
-      "is_masked": false
-    },
-    {
-      "id": 3,
-      "email": "admin3@callilog.app",
-      "display_name": "Admin 3",
-      "bodyweight_kg": 75,
-      "tagline": "Callilog Official",
-      "discipline": "All Round Calisthenics",
-      "avatar_icon": "🛡️",
-      "avatar_url": "",
-      "is_masked": false
-    },
-    {
-      "id": 4,
-      "email": "admin4@callilog.app",
-      "display_name": "Admin 4",
-      "bodyweight_kg": 75,
-      "tagline": "Callilog Official",
-      "discipline": "All Round Calisthenics",
-      "avatar_icon": "🛡️",
-      "avatar_url": "",
-      "is_masked": false
-    }
-  ],
+  "athleteSeq": 0,
+  "pbSeq": 0,
+  "athletes": [],
   "pbs": []
 }

@@ -40,11 +40,10 @@ export async function apiFetch(
 
   if (typeof window !== "undefined") {
     const storedEmail =
-      localStorage.getItem("callilog_athlete_email") ||
       currentUser?.email ||
-      "admin1@callilog.app";
+      localStorage.getItem("callilog_athlete_email");
     if (storedEmail) {
-      headers.set("x-athlete-email", storedEmail);
+      headers.set("x-athlete-email", storedEmail.trim().toLowerCase());
     }
   }
 

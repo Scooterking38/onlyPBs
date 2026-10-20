@@ -32,18 +32,28 @@ interface PBWithAthlete extends PBRecord {
     verification_status?: string;
 }
 
+const ADMIN_NAMES_MAP: Record<string, string> = {
+    "mrwe3838@gmail.com": "Admin 1",
+    "elijaharagonmorgan@gmail.com": "Admin 2",
+    "station3828@gmail.com": "Admin 3",
+    "2morgane@queenelizabeths.derbyshire.sch.uk": "Admin 4",
+};
+
+const ADMIN_EMAILS = Object.keys(ADMIN_NAMES_MAP);
+
+const checkIsAdmin = (email: string | null | undefined): boolean => {
+    if (!email) return false;
+    return ADMIN_EMAILS.includes(email.trim().toLowerCase());
+};
+
 export default function CallilogApp() {
     // Auth & Active Athlete State
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
-    const [activeEmail, setActiveEmail] = useState<string>(() => {
-        if (typeof window !== "undefined") {
-            const stored = localStorage.getItem("callilog_athlete_email");
-            if (stored && stored.trim()) return stored.trim().toLowerCase();
-        }
-        return "admin1@callilog.app";
-    });
-    const userEmail = (user?.email || activeEmail || "admin1@callilog.app").toLowerCase().trim();
+    const [isLoggingIn, setIsLoggingIn] = useState(false);
+    const [loginError, setLoginError] = useState<string | null>(null);
+
+    const userEmail = (user?.email || "").toLowerCase().trim();
 
     // Navigation & Data
     const [activeTab, setActiveTab] = useState<"vault" | "intel" | "arena" | "admin">("vault");
@@ -51,17 +61,18 @@ export default function CallilogApp() {
     const [myPbs, setMyPbs] = useState<PBRecord[]>([]);
     const [allPbs, setAllPbs] = useState<PBWithAthlete[]>([]);
     const [adminPbs, setAdminPbs] = useState<PBWithAthlete[]>([]);
-    const [isAdmin, setIsAdmin] = useState(false);
+    const [serverAdmin, setServerAdmin] = useState(false);
+    const isAdmin = useMemo(() => checkIsAdmin(userEmail) || serverAdmin, [userEmail, serverAdmin]);
     const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
 
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
-        email: "admin1@callilog.app",
-        display_name: "Admin 1",
+        email: "",
+        display_name: "",
         bodyweight_kg: 75.0,
-        tagline: "Callilog Official",
-        discipline: "All Round Calisthenics",
-        avatar_icon: "🛡️",
+        tagline: "Gravity is just a suggestion.",
+        discipline: "Statics & Holds",
+        avatar_icon: "⚡",
         avatar_url: "",
         is_masked: false,
     });
@@ -72,22 +83,20 @@ export default function CallilogApp() {
     const [activeModalSkill, setActiveModalSkill] = useState<SkillNode | null>(null);
     const [showFighterCard, setShowFighterCard] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
-    const [showSwitcherModal, setShowSwitcherModal] = useState(false);
-    const [switcherInput, setSwitcherInput] = useState("");
     const [isExportingCard, setIsExportingCard] = useState(false);
 
-    // New Upgrades State: Head-to-Head & Video Preview
+    // Head-to-Head & Video Preview
     const [compareTarget, setCompareTarget] = useState<{ displayName: string; pbs: PBRecord[]; bw: number } | null>(null);
     const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
 
     // Edit Profile Form State
-    const [editName, setEditName] = useState(profile.display_name);
-    const [editBw, setEditBw] = useState(profile.bodyweight_kg);
-    const [editTagline, setEditTagline] = useState(profile.tagline);
-    const [editDiscipline, setEditDiscipline] = useState(profile.discipline);
-    const [editIcon, setEditIcon] = useState(profile.avatar_icon);
-    const [editAvatarUrl, setEditAvatarUrl] = useState(profile.avatar_url);
-    const [editMasked, setEditMasked] = useState(profile.is_masked);
+    const [editName, setEditName] = useState("");
+    const [editBw, setEditBw] = useState(75.0);
+    const [editTagline, setEditTagline] = useState("");
+    const [editDiscipline, setEditDiscipline] = useState("Statics & Holds");
+    const [editIcon, setEditIcon] = useState("⚡");
+    const [editAvatarUrl, setEditAvatarUrl] = useState("");
+    const [editMasked, setEditMasked] = useState(false);
 
     // PB Form State
     const [repsOrDur, setRepsOrDur] = useState(10);
@@ -100,9 +109,13 @@ export default function CallilogApp() {
         const unsub = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
             if (currentUser?.email) {
-                setActiveEmail(currentUser.email.toLowerCase().trim());
+                const em = currentUser.email.toLowerCase().trim();
                 if (typeof window !== "undefined") {
-                    localStorage.setItem("callilog_athlete_email", currentUser.email.toLowerCase().trim());
+                    localStorage.setItem("callilog_athlete_email", em);
+                }
+            } else {
+                if (typeof window !== "undefined") {
+                    localStorage.removeItem("callilog_athlete_email");
                 }
             }
             setAuthLoading(false);
@@ -110,28 +123,78 @@ export default function CallilogApp() {
         return () => unsub();
     }, []);
 
-    const fetchProfile = async () => {
-        const targetEmail = userEmail || "mrwe3838@gmail.com";
+    const handleGoogleLogin = async () => {
+        setIsLoggingIn(true);
+        setLoginError(null);
         try {
-            const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(targetEmail)}`));
+            const result = await login();
+            if (result?.user) {
+                setUser(result.user);
+                if (result.user.email) {
+                    const em = result.user.email.toLowerCase().trim();
+                    if (typeof window !== "undefined") {
+                        localStorage.setItem("callilog_athlete_email", em);
+                    }
+                }
+            }
+        } catch (err: unknown) {
+            console.error("Google sign-in error:", err);
+            const msg = err instanceof Error ? err.message : "Google sign-in failed. Please verify popups are allowed and try again.";
+            setLoginError(msg);
+        } finally {
+            setIsLoggingIn(false);
+        }
+    };
+
+    const handleSignOut = async () => {
+        try {
+            await logout();
+            setUser(null);
+            if (typeof window !== "undefined") {
+                localStorage.removeItem("callilog_athlete_email");
+            }
+            setServerAdmin(false);
+            setMyPbs([]);
+            setAdminPbs([]);
+            setProfile({
+                email: "",
+                display_name: "",
+                bodyweight_kg: 75.0,
+                tagline: "Gravity is just a suggestion.",
+                discipline: "Statics & Holds",
+                avatar_icon: "⚡",
+                avatar_url: "",
+                is_masked: false,
+            });
+        } catch (err) {
+            console.error("Sign-out error:", err);
+        }
+    };
+
+    const fetchProfile = async () => {
+        if (!userEmail) return;
+        try {
+            const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(userEmail)}`));
             if (res.ok) {
                 const data = await res.json();
                 setProfile(data);
-                setEditName(data.display_name || user?.displayName || targetEmail.split("@")[0]);
+                const defaultFallback = ADMIN_NAMES_MAP[userEmail] || user?.displayName || userEmail.split("@")[0];
+                setEditName(data.display_name || defaultFallback);
                 setEditBw(Number(data.bodyweight_kg) || 75.0);
                 setEditTagline(data.tagline || "");
                 setEditDiscipline(data.discipline || "Statics & Holds");
-                setEditIcon(data.avatar_icon || "⚡");
+                setEditIcon(data.avatar_icon || (checkIsAdmin(userEmail) ? "🛡️" : "⚡"));
                 setEditAvatarUrl(data.avatar_url || user?.photoURL || "");
                 setEditMasked(Boolean(data.is_masked));
             } else {
-                const defaultName = user?.displayName || targetEmail.split("@")[0];
+                const defaultName = ADMIN_NAMES_MAP[userEmail] || user?.displayName || userEmail.split("@")[0];
                 setEditName(defaultName);
                 setProfile((prev) => ({
                     ...prev,
-                    email: targetEmail,
+                    email: userEmail,
                     display_name: defaultName,
                     avatar_url: user?.photoURL || "",
+                    avatar_icon: checkIsAdmin(userEmail) ? "🛡️" : "⚡",
                 }));
             }
         } catch (err) {
@@ -141,8 +204,10 @@ export default function CallilogApp() {
 
     const fetchLeaderboard = async () => {
         try {
-            const targetEmail = userEmail || "mrwe3838@gmail.com";
-            const res = await apiFetch(apiUrl(`/api/leaderboard?viewerEmail=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
+            const queryUrl = userEmail
+                ? apiUrl(`/api/leaderboard?viewerEmail=${encodeURIComponent(userEmail)}`)
+                : apiUrl("/api/leaderboard");
+            const res = await apiFetch(queryUrl, { cache: "no-store" });
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data.leaderboard)) {
@@ -155,6 +220,7 @@ export default function CallilogApp() {
     };
 
     const fetchPbs = async () => {
+        if (!userEmail) return;
         try {
             const publicResponse = await apiFetch(apiUrl("/api/pbs"), { cache: "no-store" });
             if (publicResponse.ok) {
@@ -162,8 +228,7 @@ export default function CallilogApp() {
                 setAllPbs(publicRows);
             }
 
-            const targetEmail = userEmail || "mrwe3838@gmail.com";
-            const mineResponse = await apiFetch(apiUrl(`/api/pbs?mine=true&email=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
+            const mineResponse = await apiFetch(apiUrl(`/api/pbs?mine=true&email=${encodeURIComponent(userEmail)}`), { cache: "no-store" });
             if (mineResponse.ok) {
                 const mineRows: PBRecord[] = await mineResponse.json();
                 setMyPbs(mineRows.map((pb) => ({
@@ -182,39 +247,41 @@ export default function CallilogApp() {
     };
 
     const fetchAdminPbs = async () => {
-        try {
-            const targetEmail = userEmail || "admin1@callilog.app";
-            const isKnownAdmin = [
-                "admin1@callilog.app",
-                "admin2@callilog.app",
-                "admin3@callilog.app",
-                "admin4@callilog.app",
-                "admin@callilog.app",
-                "mrwe3838@gmail.com",
-            ].includes(targetEmail) || /^admin[1-4]@/i.test(targetEmail);
+        if (!userEmail || !checkIsAdmin(userEmail)) {
+            setServerAdmin(false);
+            setAdminPbs([]);
+            return;
+        }
 
-            const response = await apiFetch(apiUrl(`/api/admin?email=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
+        try {
+            const response = await apiFetch(apiUrl(`/api/admin?email=${encodeURIComponent(userEmail)}`), { cache: "no-store" });
             if (!response.ok) {
-                setIsAdmin(isKnownAdmin);
+                setServerAdmin(false);
                 setAdminPbs([]);
                 return;
             }
 
             const data = await response.json();
-            setIsAdmin(data.isAdmin === true || isKnownAdmin);
+            setServerAdmin(data.isAdmin === true);
             setAdminPbs(Array.isArray(data.pending) ? data.pending : []);
         } catch (error) {
             console.error("Failed to load admin queue", error);
-            setIsAdmin(true);
+            setServerAdmin(false);
             setAdminPbs([]);
         }
     };
 
     useEffect(() => {
-        fetchProfile();
-        fetchPbs();
-        fetchLeaderboard();
-        fetchAdminPbs();
+        if (userEmail) {
+            fetchProfile();
+            fetchPbs();
+            fetchLeaderboard();
+            fetchAdminPbs();
+        } else {
+            setServerAdmin(false);
+            setMyPbs([]);
+            setAdminPbs([]);
+        }
     }, [userEmail]);
 
     // Keyboard shortcut listener
@@ -268,9 +335,9 @@ export default function CallilogApp() {
 
     const handleSavePb = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!activeModalSkill) return;
+        if (!activeModalSkill || !userEmail) return;
 
-        const effectiveEmail = userEmail || "mrwe3838@gmail.com";
+        const effectiveEmail = userEmail;
         const reps = activeModalSkill.type === "dyn" ? Number(repsOrDur) : 0;
         const duration = activeModalSkill.type === "iso" ? Number(repsOrDur) : 0;
         const wt = Number(ballast) || 0;
@@ -323,7 +390,8 @@ export default function CallilogApp() {
 
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
-        const effectiveEmail = userEmail || "mrwe3838@gmail.com";
+        if (!userEmail) return;
+        const effectiveEmail = userEmail;
         const newBw = Number(editBw) || 75.0;
 
         // Optimistically update local profile state
@@ -363,17 +431,6 @@ export default function CallilogApp() {
 
         setShowProfileModal(false);
         await Promise.all([fetchProfile(), fetchPbs(), fetchLeaderboard()]);
-    };
-
-    const handleSwitchAthlete = (email: string) => {
-        const clean = email.toLowerCase().trim();
-        if (!clean) return;
-        setActiveEmail(clean);
-        if (typeof window !== "undefined") {
-            localStorage.setItem("callilog_athlete_email", clean);
-        }
-        setShowSwitcherModal(false);
-        setSwitcherInput("");
     };
 
     // Avatar Renderer
@@ -443,8 +500,120 @@ export default function CallilogApp() {
 
     if (authLoading) {
         return (
-            <main className="app-shell" style={{ maxWidth: "880px", margin: "100px auto", textAlign: "center", color: "#6C7282" }}>
-                Connecting to Callilog Network...
+            <main className="app-shell" style={{ maxWidth: "600px", margin: "140px auto", textAlign: "center", padding: "0 20px" }}>
+                <div style={{ fontSize: "2.5rem", marginBottom: "16px" }}>⚡</div>
+                <h2 style={{ fontSize: "1.3rem", fontWeight: 700, color: "#EDEDED", marginBottom: "8px" }}>
+                    Connecting to Callilog Network...
+                </h2>
+                <p style={{ fontSize: "0.85rem", color: "#6C7282" }}>
+                    Synchronizing verified athlete benchmarks and strength calibrations
+                </p>
+            </main>
+        );
+    }
+
+    if (!user) {
+        return (
+            <main className="app-shell" style={{ maxWidth: "560px", margin: "60px auto 100px", padding: "0 18px" }}>
+                <div className="titanium-slab" style={{ padding: "36px 30px", textAlign: "center", position: "relative", overflow: "hidden" }}>
+                    <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: "3px", background: "linear-gradient(90deg, #E2A73B, #A78BFA, #38BDF8)" }} />
+
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", background: "rgba(226, 167, 59, 0.12)", border: "1px solid rgba(226, 167, 59, 0.35)", borderRadius: "20px", padding: "4px 14px", marginBottom: "20px" }}>
+                        <span style={{ fontSize: "0.75rem", color: "#E2A73B", fontWeight: 700, letterSpacing: "0.08em" }}>
+                            🛡️ OFFICIAL CALISTHENICS FEDERATION
+                        </span>
+                    </div>
+
+                    <h1 style={{ fontSize: "2.1rem", fontWeight: 900, letterSpacing: "-0.03em", color: "#EDEDED", margin: "0 0 10px 0", textTransform: "uppercase" }}>
+                        Callilog Arena
+                    </h1>
+                    <p style={{ fontSize: "0.92rem", color: "#9CA3AF", lineHeight: 1.5, margin: "0 0 28px 0" }}>
+                        The official verified calisthenics benchmark arena. Sign in with your Google account to log personal records, unlock your strength-to-weight dual ELO rating, and compete on the global leaderboard.
+                    </p>
+
+                    {loginError && (
+                        <div style={{ background: "rgba(239, 68, 68, 0.12)", border: "1px solid rgba(239, 68, 68, 0.35)", borderRadius: "6px", padding: "12px 16px", marginBottom: "20px", textAlign: "left", fontSize: "0.82rem", color: "#FCA5A5" }}>
+                            <div style={{ fontWeight: 700, marginBottom: "3px" }}>Authentication Notice</div>
+                            <div>{loginError}</div>
+                        </div>
+                    )}
+
+                    <button
+                        onClick={handleGoogleLogin}
+                        disabled={isLoggingIn}
+                        style={{
+                            width: "100%",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "12px",
+                            background: "#FFFFFF",
+                            color: "#111827",
+                            border: "none",
+                            borderRadius: "8px",
+                            padding: "14px 24px",
+                            fontSize: "1rem",
+                            fontWeight: 700,
+                            cursor: isLoggingIn ? "not-allowed" : "pointer",
+                            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.5)",
+                            transition: "all 0.15s ease",
+                            marginBottom: "26px",
+                        }}
+                    >
+                        <svg width="20" height="20" viewBox="0 0 24 24">
+                            <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                            <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                            <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                            <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+                        </svg>
+                        {isLoggingIn ? "Signing In with Google..." : "Sign in with Google"}
+                    </button>
+
+                    <div style={{ borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: "20px", textAlign: "left" }}>
+                        <div style={{ fontSize: "0.75rem", color: "#E2A73B", fontWeight: 700, letterSpacing: "0.06em", marginBottom: "8px" }}>
+                            FEDERATION ADMINISTRATOR DIRECTORY
+                        </div>
+                        <p style={{ fontSize: "0.78rem", color: "#8A90A2", lineHeight: 1.5, margin: "0 0 10px 0" }}>
+                            Authorized Google accounts automatically receive full administrator access (Admin 1 through 4) upon sign-in:
+                        </p>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "0.75rem" }}>
+                            <div style={{ background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "6px", padding: "8px 10px" }}>
+                                <div style={{ color: "#E2A73B", fontWeight: 700 }}>Admin 1</div>
+                                <div style={{ color: "#9CA3AF", fontSize: "0.7rem", wordBreak: "break-all" }}>mrwe3838@gmail.com</div>
+                            </div>
+                            <div style={{ background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "6px", padding: "8px 10px" }}>
+                                <div style={{ color: "#E2A73B", fontWeight: 700 }}>Admin 2</div>
+                                <div style={{ color: "#9CA3AF", fontSize: "0.7rem", wordBreak: "break-all" }}>elijaharagonmorgan@gmail.com</div>
+                            </div>
+                            <div style={{ background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "6px", padding: "8px 10px" }}>
+                                <div style={{ color: "#E2A73B", fontWeight: 700 }}>Admin 3</div>
+                                <div style={{ color: "#9CA3AF", fontSize: "0.7rem", wordBreak: "break-all" }}>station3828@gmail.com</div>
+                            </div>
+                            <div style={{ background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "6px", padding: "8px 10px" }}>
+                                <div style={{ color: "#E2A73B", fontWeight: 700 }}>Admin 4</div>
+                                <div style={{ color: "#9CA3AF", fontSize: "0.7rem", wordBreak: "break-all" }}>2morgane@queenelizabeths.derbyshire.sch.uk</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginTop: "16px" }}>
+                    <div className="titanium-slab" style={{ padding: "16px", textAlign: "center" }}>
+                        <div style={{ fontSize: "1.4rem", marginBottom: "6px" }}>⚡</div>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "#EDEDED", marginBottom: "4px" }}>Dual ELO</div>
+                        <div style={{ fontSize: "0.72rem", color: "#6C7282" }}>Real strength-to-weight calibration</div>
+                    </div>
+                    <div className="titanium-slab" style={{ padding: "16px", textAlign: "center" }}>
+                        <div style={{ fontSize: "1.4rem", marginBottom: "6px" }}>🛡️</div>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "#EDEDED", marginBottom: "4px" }}>Video Proofs</div>
+                        <div style={{ fontSize: "0.72rem", color: "#6C7282" }}>Strict form federation review</div>
+                    </div>
+                    <div className="titanium-slab" style={{ padding: "16px", textAlign: "center" }}>
+                        <div style={{ fontSize: "1.4rem", marginBottom: "6px" }}>🎴</div>
+                        <div style={{ fontSize: "0.8rem", fontWeight: 700, color: "#EDEDED", marginBottom: "4px" }}>Fighter Cards</div>
+                        <div style={{ fontSize: "0.72rem", color: "#6C7282" }}>High-res PNG athlete cards</div>
+                    </div>
+                </div>
             </main>
         );
     }
@@ -471,11 +640,12 @@ export default function CallilogApp() {
                         </div>
 
                         <div>
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px", flexWrap: "wrap" }}>
                                 <span style={{ fontSize: "1.3rem", fontWeight: 700, letterSpacing: "-0.02em" }}>
                                     {profile.display_name || user?.displayName || userEmail.split("@")[0]}
                                 </span>
                                 <span className="pill-badge pill-gold">{badge.title}</span>
+                                {isAdmin && <span className="pill-badge pill-gold" style={{ background: "rgba(226, 167, 59, 0.2)", color: "#E2A73B", border: "1px solid rgba(226, 167, 59, 0.5)" }}>🛡️ ADMIN</span>}
                                 {profile.is_masked && <span className="pill-badge pill-slate">👻 GHOST</span>}
                             </div>
 
@@ -484,27 +654,13 @@ export default function CallilogApp() {
                                 <span>•</span>
                                 <span>{profile.discipline}</span>
                                 <span>•</span>
+                                <span style={{ color: "#9CA3AF" }}>{userEmail}</span>
+                                <span>•</span>
                                 <button
                                     onClick={() => setShowProfileModal(true)}
                                     style={{ background: "none", border: "none", color: "#A78BFA", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
                                 >
                                     Edit Profile
-                                </button>
-                                <span>•</span>
-                                <button
-                                    onClick={() => setShowSwitcherModal(true)}
-                                    style={{
-                                        background: "rgba(167, 139, 250, 0.15)",
-                                        color: "#C4B5FD",
-                                        border: "1px solid rgba(167, 139, 250, 0.35)",
-                                        borderRadius: "4px",
-                                        padding: "2px 8px",
-                                        fontSize: "0.72rem",
-                                        fontWeight: 700,
-                                        cursor: "pointer",
-                                    }}
-                                >
-                                    🔄 Switch Athlete
                                 </button>
                                 <span>•</span>
                                 <button
@@ -522,27 +678,22 @@ export default function CallilogApp() {
                                 >
                                     🎴 FIGHTER CARD
                                 </button>
-                                {user ? (
-                                    <>
-                                        <span>•</span>
-                                        <button
-                                            onClick={logout}
-                                            style={{ background: "none", border: "none", color: "#EF4444", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
-                                        >
-                                            Sign Out
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span>•</span>
-                                        <button
-                                            onClick={login}
-                                            style={{ background: "none", border: "none", color: "#38BDF8", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
-                                        >
-                                            Sign in with Google
-                                        </button>
-                                    </>
-                                )}
+                                <span>•</span>
+                                <button
+                                    onClick={handleSignOut}
+                                    style={{
+                                        background: "rgba(239, 68, 68, 0.15)",
+                                        color: "#F87171",
+                                        border: "1px solid rgba(239, 68, 68, 0.3)",
+                                        borderRadius: "4px",
+                                        padding: "2px 8px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    Sign Out
+                                </button>
                             </div>
                         </div>
                     </div>
@@ -1415,105 +1566,7 @@ export default function CallilogApp() {
                 </div>
             )}
 
-            {/* 12b. MODAL: ATHLETE PROFILE SWITCHER */}
-            {showSwitcherModal && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 125 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "420px", padding: "24px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
-                            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#EDEDED" }}>
-                                🔄 Switch Athlete Identity
-                            </h3>
-                            <button
-                                onClick={() => setShowSwitcherModal(false)}
-                                style={{ background: "none", border: "none", color: "#8A90A2", fontSize: "1.1rem", cursor: "pointer" }}
-                            >
-                                ✕
-                            </button>
-                        </div>
-                        <p style={{ fontSize: "0.78rem", color: "#8A90A2", marginBottom: "16px" }}>
-                            Select an administrator identity (Admin 1 - 4) or enter any athlete identity:
-                        </p>
 
-                        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px" }}>
-                            {[
-                                { name: "Admin 1", email: "admin1@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
-                                { name: "Admin 2", email: "admin2@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
-                                { name: "Admin 3", email: "admin3@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
-                                { name: "Admin 4", email: "admin4@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
-                            ].map((ath) => {
-                                const isCurrent = userEmail === ath.email || (ath.email === "admin1@callilog.app" && userEmail === "mrwe3838@gmail.com");
-                                return (
-                                    <button
-                                        key={ath.email}
-                                        onClick={() => handleSwitchAthlete(ath.email)}
-                                        style={{
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "space-between",
-                                            background: isCurrent ? "rgba(226, 167, 59, 0.12)" : "rgba(255, 255, 255, 0.03)",
-                                            border: isCurrent ? "1px solid rgba(226, 167, 59, 0.5)" : "1px solid rgba(255, 255, 255, 0.08)",
-                                            borderRadius: "6px",
-                                            padding: "10px 14px",
-                                            color: "#EDEDED",
-                                            cursor: "pointer",
-                                            textAlign: "left",
-                                        }}
-                                    >
-                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <span style={{ fontSize: "1.2rem" }}>{ath.icon}</span>
-                                            <div>
-                                                <div style={{ fontSize: "0.88rem", fontWeight: 700, color: isCurrent ? "#E2A73B" : "#FFF" }}>
-                                                    {ath.name} {isCurrent && <span style={{ fontSize: "0.68rem" }}>(ACTIVE)</span>}
-                                                </div>
-                                                <div style={{ fontSize: "0.72rem", color: "#6C7282" }}>{ath.email} • {ath.bw}</div>
-                                            </div>
-                                        </div>
-                                        <span style={{ fontSize: "0.72rem", color: "#E2A73B", fontWeight: 700 }}>{ath.rank}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-
-                        <div style={{ borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: "14px" }}>
-                            <label style={{ fontSize: "0.75rem", color: "#8A90A2", display: "block", marginBottom: "6px", fontWeight: 700 }}>
-                                OR ENTER CUSTOM ATHLETE EMAIL
-                            </label>
-                            <form
-                                onSubmit={(e) => {
-                                    e.preventDefault();
-                                    if (switcherInput.trim()) {
-                                        handleSwitchAthlete(switcherInput.trim());
-                                    }
-                                }}
-                                style={{ display: "flex", gap: "8px" }}
-                            >
-                                <input
-                                    type="email"
-                                    placeholder="athlete@gym.com"
-                                    value={switcherInput}
-                                    onChange={(e) => setSwitcherInput(e.target.value)}
-                                    style={{
-                                        flex: 1,
-                                        background: "#08090C",
-                                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                                        borderRadius: "6px",
-                                        padding: "8px 12px",
-                                        color: "#FFF",
-                                        fontSize: "0.85rem",
-                                    }}
-                                />
-                                <button
-                                    type="submit"
-                                    className="btn-primary"
-                                    style={{ padding: "8px 14px", fontSize: "0.82rem" }}
-                                >
-                                    Activate
-                                </button>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* 13. NATIVE iOS FROSTED BOTTOM BAR */}
             <div
