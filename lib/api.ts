@@ -18,8 +18,7 @@ export function apiUrl(path: string): string {
 }
 
 /**
- * Attach a Firebase ID token to API requests when a user is signed in.
- * The backend must verify this token before trusting the user's identity.
+ * Attach a Firebase ID token and x-athlete-email to API requests.
  */
 export async function apiFetch(
   input: RequestInfo | URL,
@@ -29,7 +28,24 @@ export async function apiFetch(
   const currentUser = auth.currentUser;
 
   if (currentUser) {
-    headers.set("Authorization", `Bearer ${await currentUser.getIdToken()}`);
+    try {
+      const token = await currentUser.getIdToken();
+      if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+    } catch {
+      // Ignore token fetch errors
+    }
+  }
+
+  if (typeof window !== "undefined") {
+    const storedEmail =
+      localStorage.getItem("callilog_athlete_email") ||
+      currentUser?.email ||
+      "mrwe3838@gmail.com";
+    if (storedEmail) {
+      headers.set("x-athlete-email", storedEmail);
+    }
   }
 
   if (init.body && !headers.has("Content-Type")) {

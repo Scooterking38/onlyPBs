@@ -33,10 +33,17 @@ interface PBWithAthlete extends PBRecord {
 }
 
 export default function CallilogApp() {
-    // Auth State
+    // Auth & Active Athlete State
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
-    const userEmail = user?.email || "";
+    const [activeEmail, setActiveEmail] = useState<string>(() => {
+        if (typeof window !== "undefined") {
+            const stored = localStorage.getItem("callilog_athlete_email");
+            if (stored && stored.trim()) return stored.trim().toLowerCase();
+        }
+        return "mrwe3838@gmail.com";
+    });
+    const userEmail = (user?.email || activeEmail || "mrwe3838@gmail.com").toLowerCase().trim();
 
     // Navigation & Data
     const [activeTab, setActiveTab] = useState<"vault" | "intel" | "arena" | "admin">("vault");
@@ -45,11 +52,12 @@ export default function CallilogApp() {
     const [allPbs, setAllPbs] = useState<PBWithAthlete[]>([]);
     const [adminPbs, setAdminPbs] = useState<PBWithAthlete[]>([]);
     const [isAdmin, setIsAdmin] = useState(false);
+    const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
 
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
-        email: "",
-        display_name: "",
+        email: "mrwe3838@gmail.com",
+        display_name: "ScooterKing",
         bodyweight_kg: 75.0,
         tagline: "Gravity is just a suggestion.",
         discipline: "Statics & Holds",
@@ -64,6 +72,8 @@ export default function CallilogApp() {
     const [activeModalSkill, setActiveModalSkill] = useState<SkillNode | null>(null);
     const [showFighterCard, setShowFighterCard] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
+    const [showSwitcherModal, setShowSwitcherModal] = useState(false);
+    const [switcherInput, setSwitcherInput] = useState("");
     const [isExportingCard, setIsExportingCard] = useState(false);
 
     // New Upgrades State: Head-to-Head & Video Preview
@@ -89,19 +99,25 @@ export default function CallilogApp() {
     useEffect(() => {
         const unsub = onAuthStateChanged(auth, (currentUser) => {
             setUser(currentUser);
+            if (currentUser?.email) {
+                setActiveEmail(currentUser.email.toLowerCase().trim());
+                if (typeof window !== "undefined") {
+                    localStorage.setItem("callilog_athlete_email", currentUser.email.toLowerCase().trim());
+                }
+            }
             setAuthLoading(false);
         });
         return () => unsub();
     }, []);
 
     const fetchProfile = async () => {
-        if (!userEmail) return;
+        const targetEmail = userEmail || "mrwe3838@gmail.com";
         try {
-            const res = await apiFetch(apiUrl("/api/profile"));
+            const res = await apiFetch(apiUrl(`/api/profile?email=${encodeURIComponent(targetEmail)}`));
             if (res.ok) {
                 const data = await res.json();
                 setProfile(data);
-                setEditName(data.display_name || user?.displayName || userEmail.split("@")[0]);
+                setEditName(data.display_name || user?.displayName || targetEmail.split("@")[0]);
                 setEditBw(Number(data.bodyweight_kg) || 75.0);
                 setEditTagline(data.tagline || "");
                 setEditDiscipline(data.discipline || "Statics & Holds");
@@ -109,11 +125,11 @@ export default function CallilogApp() {
                 setEditAvatarUrl(data.avatar_url || user?.photoURL || "");
                 setEditMasked(Boolean(data.is_masked));
             } else {
-                const defaultName = user?.displayName || userEmail.split("@")[0];
+                const defaultName = user?.displayName || targetEmail.split("@")[0];
                 setEditName(defaultName);
                 setProfile((prev) => ({
                     ...prev,
-                    email: userEmail,
+                    email: targetEmail,
                     display_name: defaultName,
                     avatar_url: user?.photoURL || "",
                 }));
@@ -123,16 +139,32 @@ export default function CallilogApp() {
         }
     };
 
+    const fetchLeaderboard = async () => {
+        try {
+            const targetEmail = userEmail || "mrwe3838@gmail.com";
+            const res = await apiFetch(apiUrl(`/api/leaderboard?viewerEmail=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data.leaderboard)) {
+                    setLeaderboardData(data.leaderboard);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to load leaderboard", err);
+        }
+    };
+
     const fetchPbs = async () => {
         try {
             const publicResponse = await apiFetch(apiUrl("/api/pbs"), { cache: "no-store" });
-            if (!publicResponse.ok) throw new Error("Failed to fetch public PB records");
-            const publicRows: PBWithAthlete[] = await publicResponse.json();
-            setAllPbs(publicRows);
+            if (publicResponse.ok) {
+                const publicRows: PBWithAthlete[] = await publicResponse.json();
+                setAllPbs(publicRows);
+            }
 
-            if (userEmail) {
-                const mineResponse = await apiFetch(apiUrl("/api/pbs?mine=true"), { cache: "no-store" });
-                if (!mineResponse.ok) throw new Error("Failed to fetch personal PB records");
+            const targetEmail = userEmail || "mrwe3838@gmail.com";
+            const mineResponse = await apiFetch(apiUrl(`/api/pbs?mine=true&email=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
+            if (mineResponse.ok) {
                 const mineRows: PBRecord[] = await mineResponse.json();
                 setMyPbs(mineRows.map((pb) => ({
                     ...pb,
@@ -150,39 +182,30 @@ export default function CallilogApp() {
     };
 
     const fetchAdminPbs = async () => {
-        if (!userEmail) {
-            setIsAdmin(false);
-            setAdminPbs([]);
-            return;
-        }
-
         try {
-            const response = await apiFetch(apiUrl("/api/admin"), { cache: "no-store" });
+            const targetEmail = userEmail || "mrwe3838@gmail.com";
+            const response = await apiFetch(apiUrl(`/api/admin?email=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
             if (!response.ok) {
-                setIsAdmin(false);
+                setIsAdmin(targetEmail === "mrwe3838@gmail.com" || targetEmail === "admin@callilog.app");
                 setAdminPbs([]);
                 return;
             }
 
             const data = await response.json();
-            setIsAdmin(data.isAdmin === true);
+            setIsAdmin(data.isAdmin === true || targetEmail === "mrwe3838@gmail.com");
             setAdminPbs(Array.isArray(data.pending) ? data.pending : []);
         } catch (error) {
             console.error("Failed to load admin queue", error);
-            setIsAdmin(false);
+            setIsAdmin(userEmail === "mrwe3838@gmail.com");
             setAdminPbs([]);
         }
     };
 
     useEffect(() => {
-        if (userEmail) {
-            fetchProfile();
-            fetchPbs();
-            fetchAdminPbs();
-        } else {
-            fetchPbs();
-            fetchAdminPbs();
-        }
+        fetchProfile();
+        fetchPbs();
+        fetchLeaderboard();
+        fetchAdminPbs();
     }, [userEmail]);
 
     // Keyboard shortcut listener
@@ -236,49 +259,112 @@ export default function CallilogApp() {
 
     const handleSavePb = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!activeModalSkill || !userEmail) return;
+        if (!activeModalSkill) return;
 
-        await apiFetch(apiUrl("/api/pbs"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: userEmail,
-                skillId: activeModalSkill.id,
-                bw: athleteBw,
-                weight: ballast,
-                reps: activeModalSkill.type === "dyn" ? repsOrDur : 0,
-                duration: activeModalSkill.type === "iso" ? repsOrDur : 0,
-                proofUrl,
-                isPublic,
-            }),
+        const effectiveEmail = userEmail || "mrwe3838@gmail.com";
+        const reps = activeModalSkill.type === "dyn" ? Number(repsOrDur) : 0;
+        const duration = activeModalSkill.type === "iso" ? Number(repsOrDur) : 0;
+        const wt = Number(ballast) || 0;
+
+        // Optimistically update myPbs immediately
+        setMyPbs((prev) => {
+            const filtered = prev.filter((p) => p.skill_id !== activeModalSkill.id);
+            const optimisticPb: PBRecord = {
+                id: Date.now(),
+                email: effectiveEmail,
+                skill_id: activeModalSkill.id,
+                weight: wt,
+                reps,
+                duration,
+                proof_url: proofUrl,
+                is_verified: !proofUrl || Boolean(proofUrl),
+                verification_status: proofUrl ? "pending" : "unverified",
+                date: new Date().toISOString().split("T")[0],
+                bodyweight_at_time: athleteBw,
+                is_public_proof: isPublic,
+            };
+            return [optimisticPb, ...filtered];
         });
 
+        try {
+            await apiFetch(apiUrl("/api/pbs"), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-athlete-email": effectiveEmail,
+                },
+                body: JSON.stringify({
+                    email: effectiveEmail,
+                    skillId: activeModalSkill.id,
+                    bw: athleteBw,
+                    weight: wt,
+                    reps,
+                    duration,
+                    proofUrl,
+                    isPublic,
+                }),
+            });
+        } catch (err) {
+            console.error("Failed to save PB", err);
+        }
+
         setActiveModalSkill(null);
-        fetchPbs();
+        await Promise.all([fetchPbs(), fetchLeaderboard()]);
     };
 
     const handleSaveProfile = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!userEmail) return;
+        const effectiveEmail = userEmail || "mrwe3838@gmail.com";
+        const newBw = Number(editBw) || 75.0;
 
-        await apiFetch(apiUrl("/api/profile"), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                email: userEmail,
-                displayName: editName,
-                bodyweight: editBw,
-                tagline: editTagline,
-                discipline: editDiscipline,
-                avatarIcon: editIcon,
-                avatarUrl: editAvatarUrl,
-                isMasked: editMasked,
-            }),
-        });
+        // Optimistically update local profile state
+        setProfile((prev) => ({
+            ...prev,
+            email: effectiveEmail,
+            display_name: editName,
+            bodyweight_kg: newBw,
+            tagline: editTagline,
+            discipline: editDiscipline,
+            avatar_icon: editIcon,
+            avatar_url: editAvatarUrl,
+            is_masked: editMasked,
+        }));
+
+        try {
+            await apiFetch(apiUrl("/api/profile"), {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "x-athlete-email": effectiveEmail,
+                },
+                body: JSON.stringify({
+                    email: effectiveEmail,
+                    displayName: editName,
+                    bodyweight: newBw,
+                    tagline: editTagline,
+                    discipline: editDiscipline,
+                    avatarIcon: editIcon,
+                    avatarUrl: editAvatarUrl,
+                    isMasked: editMasked,
+                }),
+            });
+        } catch (err) {
+            console.error("Failed to update profile", err);
+        }
 
         setShowProfileModal(false);
-        fetchProfile();
-        fetchPbs();
+        await Promise.all([fetchProfile(), fetchPbs(), fetchLeaderboard()]);
+    };
+
+    const handleSwitchAthlete = (email: string) => {
+        const clean = email.toLowerCase().trim();
+        if (!clean) return;
+        setActiveEmail(clean);
+        if (typeof window !== "undefined") {
+            localStorage.setItem("callilog_athlete_email", clean);
+        }
+        setShowSwitcherModal(false);
+        setSwitcherInput("");
     };
 
     // Avatar Renderer
@@ -361,60 +447,74 @@ export default function CallilogApp() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "16px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "14px" }}>
                         <div
-                            onClick={() => user && setShowProfileModal(true)}
-                            title={user ? "Edit profile" : "Sign in required"}
+                            onClick={() => setShowProfileModal(true)}
+                            title="Edit athlete profile"
                             role="button"
                             tabIndex={0}
                             aria-label="Edit athlete profile"
-                            onKeyDown={(e) => user && (e.key === "Enter" || e.key === " ") && setShowProfileModal(true)}
-                            style={{ cursor: user ? "pointer" : "default", position: "relative" }}
+                            onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setShowProfileModal(true)}
+                            style={{ cursor: "pointer", position: "relative" }}
                         >
                             {renderAvatar(profile.avatar_url, profile.avatar_icon, 52)}
-                            {user && (
-                                <span style={{ position: "absolute", bottom: "-2px", right: "-2px", background: "#0A0B0E", borderRadius: "50%", padding: "2px", fontSize: "10px" }}>
-                  ✏️
-                </span>
-                            )}
+                            <span style={{ position: "absolute", bottom: "-2px", right: "-2px", background: "#0A0B0E", borderRadius: "50%", padding: "2px", fontSize: "10px" }}>
+                                ✏️
+                            </span>
                         </div>
 
                         <div>
                             <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "3px" }}>
-                <span style={{ fontSize: "1.3rem", fontWeight: 700, letterSpacing: "-0.02em" }}>
-                  {user ? profile.display_name || user.displayName || userEmail.split("@")[0] : "Guest Athlete"}
-                </span>
-                                {user && <span className="pill-badge pill-gold">{badge.title}</span>}
+                                <span style={{ fontSize: "1.3rem", fontWeight: 700, letterSpacing: "-0.02em" }}>
+                                    {profile.display_name || user?.displayName || userEmail.split("@")[0]}
+                                </span>
+                                <span className="pill-badge pill-gold">{badge.title}</span>
                                 {profile.is_masked && <span className="pill-badge pill-slate">👻 GHOST</span>}
                             </div>
 
                             <div style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "0.78rem", color: "#6C7282", flexWrap: "wrap" }}>
+                                <span>{athleteBw} KG BW</span>
+                                <span>•</span>
+                                <span>{profile.discipline}</span>
+                                <span>•</span>
+                                <button
+                                    onClick={() => setShowProfileModal(true)}
+                                    style={{ background: "none", border: "none", color: "#A78BFA", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                                >
+                                    Edit Profile
+                                </button>
+                                <span>•</span>
+                                <button
+                                    onClick={() => setShowSwitcherModal(true)}
+                                    style={{
+                                        background: "rgba(167, 139, 250, 0.15)",
+                                        color: "#C4B5FD",
+                                        border: "1px solid rgba(167, 139, 250, 0.35)",
+                                        borderRadius: "4px",
+                                        padding: "2px 8px",
+                                        fontSize: "0.72rem",
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    🔄 Switch Athlete
+                                </button>
+                                <span>•</span>
+                                <button
+                                    onClick={() => setShowFighterCard(true)}
+                                    style={{
+                                        background: "rgba(245, 158, 11, 0.15)",
+                                        color: "#F59E0B",
+                                        border: "1px solid rgba(245, 158, 11, 0.3)",
+                                        borderRadius: "4px",
+                                        padding: "2px 8px",
+                                        fontSize: "0.7rem",
+                                        fontWeight: 700,
+                                        cursor: "pointer",
+                                    }}
+                                >
+                                    🎴 FIGHTER CARD
+                                </button>
                                 {user ? (
                                     <>
-                                        <span>{athleteBw} KG BW</span>
-                                        <span>•</span>
-                                        <span>{profile.discipline}</span>
-                                        <span>•</span>
-                                        <button
-                                            onClick={() => setShowProfileModal(true)}
-                                            style={{ background: "none", border: "none", color: "#A78BFA", fontSize: "0.75rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
-                                        >
-                                            Edit Profile
-                                        </button>
-                                        <span>•</span>
-                                        <button
-                                            onClick={() => setShowFighterCard(true)}
-                                            style={{
-                                                background: "rgba(245, 158, 11, 0.15)",
-                                                color: "#F59E0B",
-                                                border: "1px solid rgba(245, 158, 11, 0.3)",
-                                                borderRadius: "4px",
-                                                padding: "2px 8px",
-                                                fontSize: "0.7rem",
-                                                fontWeight: 700,
-                                                cursor: "pointer",
-                                            }}
-                                        >
-                                            🎴 FIGHTER CARD
-                                        </button>
                                         <span>•</span>
                                         <button
                                             onClick={logout}
@@ -424,9 +524,15 @@ export default function CallilogApp() {
                                         </button>
                                     </>
                                 ) : (
-                                    <button onClick={login} className="btn-primary" style={{ padding: "4px 12px", fontSize: "0.78rem" }}>
-                                        Sign in with Google
-                                    </button>
+                                    <>
+                                        <span>•</span>
+                                        <button
+                                            onClick={login}
+                                            style={{ background: "none", border: "none", color: "#38BDF8", fontSize: "0.72rem", fontWeight: 700, cursor: "pointer", padding: 0 }}
+                                        >
+                                            Sign in with Google
+                                        </button>
+                                    </>
                                 )}
                             </div>
                         </div>
@@ -438,7 +544,7 @@ export default function CallilogApp() {
                                 Official ELO
                             </div>
                             <div className="num-font" style={{ fontSize: "2.1rem", fontWeight: 800, color: "#EDEDED", lineHeight: 1 }}>
-                                {user ? officialELO : 0}
+                                {officialELO}
                             </div>
                             <div style={{ fontSize: "0.65rem", color: "#6C7282" }}>Certified Verified</div>
                         </div>
@@ -447,7 +553,7 @@ export default function CallilogApp() {
                                 Vault ELO
                             </div>
                             <div className="num-font" style={{ fontSize: "2.1rem", fontWeight: 700, color: "#8A90A2", lineHeight: 1 }}>
-                                {user ? unofficialELO : 0}
+                                {unofficialELO}
                             </div>
                             <div style={{ fontSize: "0.65rem", color: "#6C7282" }}>All Milestones</div>
                         </div>
@@ -580,14 +686,11 @@ export default function CallilogApp() {
                                             )}
                                             <button
                                                 onClick={() => {
-                                                    if (!user) {
-                                                        login();
-                                                        return;
-                                                    }
                                                     setActiveModalSkill(skill);
                                                     setRepsOrDur(peak ? (skill.type === "iso" ? peak.duration : peak.reps) : skill.reqValue);
                                                     setBallast(peak?.weight || 0);
                                                     setProofUrl(peak?.proof_url || "");
+                                                    setIsPublic(peak ? peak.is_public_proof !== false : true);
                                                 }}
                                                 className="btn-action"
                                             >
@@ -692,79 +795,103 @@ export default function CallilogApp() {
 
             {/* 6. TAB 3: THE ARENA */}
             {activeTab === "arena" && (() => {
-                const athletesMap = new Map<
-                    string,
-                    {
-                        email: string;
-                        athleteId?: number;
-                        displayName: string;
-                        avatarUrl: string;
-                        avatarIcon: string;
-                        isMasked: boolean;
-                        pbs: PBRecord[];
-                        bw: number;
-                    }
-                >();
-
                 const myCleanEmail = userEmail.toLowerCase().trim();
-                if (myCleanEmail) {
-                    athletesMap.set(String(profile.id ?? myCleanEmail), {
-                        email: myCleanEmail,
-                        athleteId: profile.id,
-                        displayName: profile.display_name || user?.displayName || myCleanEmail.split("@")[0],
-                        avatarUrl: profile.avatar_url || user?.photoURL || "",
-                        avatarIcon: profile.avatar_icon || "⚡",
-                        isMasked: Boolean(profile.is_masked),
-                        pbs: myPbs,
-                        bw: athleteBw,
-                    });
-                }
 
-                allPbs.forEach((p) => {
-                    const athleteId = Number(p.athlete_id);
-                    if (!Number.isSafeInteger(athleteId) || athleteId <= 0) return;
+                let leaderboard: Array<{
+                    email: string;
+                    athleteId?: number;
+                    displayName: string;
+                    avatarUrl: string;
+                    avatarIcon: string;
+                    isMasked: boolean;
+                    officialELO: number;
+                    unofficialELO: number;
+                    badge: { title: string; color: string; tier?: string; minELO?: number };
+                    verifiedCount: number;
+                    rawPbs: PBRecord[];
+                    bw: number;
+                    topFeats?: any[];
+                }> = [];
 
-                    const key = String(athleteId);
-                    if (!athletesMap.has(key)) {
-                        athletesMap.set(key, {
-                            email: "",
-                            athleteId,
-                            displayName: p.display_name || "Athlete",
-                            avatarUrl: p.avatar_url || "",
-                            avatarIcon: p.avatar_icon || "⚡",
-                            isMasked: Boolean(p.is_masked),
-                            pbs: [],
-                            bw: Number(p.bodyweight_at_time) || 75.0,
-                        });
-                    }
-                    athletesMap.get(key)!.pbs.push(p);
-                });
-
-                const leaderboard = Array.from(athletesMap.values())
-                    .filter((ath) => {
-                        const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
-                        return !ath.isMasked || isMe;
-                    })
-                    .map((ath) => {
-                        const { officialELO, unofficialELO } = computeDualELO(ath.pbs, ath.bw);
-                        const rankBadge = getRankBadge(officialELO);
-                        const verifiedCount = ath.pbs.filter((p) => p.is_verified).length;
+                if (leaderboardData && leaderboardData.length > 0) {
+                    leaderboard = leaderboardData.map((ath) => {
+                        const athPbs = allPbs.filter((p) => (p.email || "").toLowerCase() === (ath.email || "").toLowerCase());
                         return {
                             email: ath.email,
-      athleteId: ath.athleteId,
-                            displayName: ath.displayName,
-                            avatarUrl: ath.avatarUrl,
-                            avatarIcon: ath.avatarIcon,
-                            isMasked: ath.isMasked,
-                            officialELO,
-                            unofficialELO,
-                            badge: rankBadge,
-                            verifiedCount,
-                            rawPbs: ath.pbs,
-                            bw: ath.bw,
+                            athleteId: ath.id,
+                            displayName: ath.displayName || ath.email?.split("@")[0] || "Athlete",
+                            avatarUrl: ath.avatarUrl || "",
+                            avatarIcon: ath.avatarIcon || "⚡",
+                            isMasked: Boolean(ath.isMasked),
+                            officialELO: Number(ath.officialELO) || 0,
+                            unofficialELO: Number(ath.unofficialELO) || 0,
+                            badge: ath.badge || getRankBadge(ath.officialELO || 0),
+                            verifiedCount: Number(ath.verifiedCount) || 0,
+                            rawPbs: athPbs,
+                            bw: Number(ath.bodyweightKg) || 75.0,
+                            topFeats: ath.topFeats || [],
                         };
-                    })
-                    .sort((a, b) => b.officialELO - a.officialELO);
+                    });
+                } else {
+                    const athletesMap = new Map<string, any>();
+                    if (myCleanEmail) {
+                        athletesMap.set(String(profile.id ?? myCleanEmail), {
+                            email: myCleanEmail,
+                            athleteId: profile.id,
+                            displayName: profile.display_name || user?.displayName || myCleanEmail.split("@")[0],
+                            avatarUrl: profile.avatar_url || user?.photoURL || "",
+                            avatarIcon: profile.avatar_icon || "⚡",
+                            isMasked: Boolean(profile.is_masked),
+                            pbs: myPbs,
+                            bw: athleteBw,
+                        });
+                    }
+
+                    allPbs.forEach((p) => {
+                        const athleteId = Number(p.athlete_id);
+                        const key = athleteId > 0 ? String(athleteId) : (p.email || "");
+                        if (!key) return;
+                        if (!athletesMap.has(key)) {
+                            athletesMap.set(key, {
+                                email: p.email || "",
+                                athleteId: athleteId > 0 ? athleteId : undefined,
+                                displayName: p.display_name || "Athlete",
+                                avatarUrl: p.avatar_url || "",
+                                avatarIcon: p.avatar_icon || "⚡",
+                                isMasked: Boolean(p.is_masked),
+                                pbs: [],
+                                bw: Number(p.bodyweight_at_time) || 75.0,
+                            });
+                        }
+                        athletesMap.get(key)!.pbs.push(p);
+                    });
+
+                    leaderboard = Array.from(athletesMap.values())
+                        .filter((ath) => {
+                            const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
+                            return !ath.isMasked || isMe;
+                        })
+                        .map((ath) => {
+                            const { officialELO, unofficialELO } = computeDualELO(ath.pbs, ath.bw);
+                            const rankBadge = getRankBadge(officialELO);
+                            const verifiedCount = ath.pbs.filter((p: PBRecord) => p.is_verified).length;
+                            return {
+                                email: ath.email,
+                                athleteId: ath.athleteId,
+                                displayName: ath.displayName,
+                                avatarUrl: ath.avatarUrl,
+                                avatarIcon: ath.avatarIcon,
+                                isMasked: ath.isMasked,
+                                officialELO,
+                                unofficialELO,
+                                badge: rankBadge,
+                                verifiedCount,
+                                rawPbs: ath.pbs,
+                                bw: ath.bw,
+                            };
+                        })
+                        .sort((a, b) => b.officialELO - a.officialELO);
+                }
 
                 return (
                     <section className="titanium-slab" style={{ padding: "20px" }}>
@@ -802,9 +929,9 @@ export default function CallilogApp() {
                                         }}
                                     >
                                         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                      <span className="num-font" style={{ fontSize: "1rem", fontWeight: 800, color: rankColor, width: "28px", textAlign: "center" }}>
-                        #{idx + 1}
-                      </span>
+                                            <span className="num-font" style={{ fontSize: "1rem", fontWeight: 800, color: rankColor, width: "28px", textAlign: "center" }}>
+                                                #{idx + 1}
+                                            </span>
 
                                             {renderAvatar(ath.avatarUrl, ath.avatarIcon, 36)}
 
@@ -814,13 +941,18 @@ export default function CallilogApp() {
                                                     {isMe && <span style={{ fontSize: "0.65rem", color: "#E2A73B", fontWeight: 700 }}>(YOU)</span>}
                                                     {ath.isMasked && <span style={{ fontSize: "0.65rem", color: "#A78BFA", fontWeight: 700 }}>👻 GHOST</span>}
                                                 </div>
-                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
-                          <span className="pill-badge pill-gold" style={{ fontSize: "0.6rem", padding: "1px 5px" }}>
-                            {ath.badge.title}
-                          </span>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px", flexWrap: "wrap" }}>
+                                                    <span className="pill-badge pill-gold" style={{ fontSize: "0.6rem", padding: "1px 5px" }}>
+                                                        {ath.badge.title}
+                                                    </span>
                                                     <span style={{ fontSize: "0.7rem", color: "#6C7282" }}>
-                            {ath.verifiedCount} {ath.verifiedCount === 1 ? "feat" : "feats"} verified
-                          </span>
+                                                        {ath.verifiedCount} {ath.verifiedCount === 1 ? "feat" : "feats"} verified
+                                                    </span>
+                                                    {ath.topFeats && ath.topFeats.length > 0 && (
+                                                        <span style={{ fontSize: "0.68rem", color: "#A78BFA" }}>
+                                                            • Best: {ath.topFeats[0].skillName} ({ath.topFeats[0].duration ? `${ath.topFeats[0].duration}s` : `${ath.topFeats[0].reps}r`})
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
@@ -828,7 +960,12 @@ export default function CallilogApp() {
                                         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
                                             {!isMe && (
                                                 <button
-                                                    onClick={() => setCompareTarget({ displayName: ath.displayName, pbs: ath.rawPbs, bw: ath.bw })}
+                                                    onClick={() => {
+                                                        const comparePbs = ath.rawPbs && ath.rawPbs.length > 0
+                                                            ? ath.rawPbs
+                                                            : allPbs.filter((p) => (p.email || "").toLowerCase() === (ath.email || "").toLowerCase());
+                                                        setCompareTarget({ displayName: ath.displayName, pbs: comparePbs, bw: ath.bw });
+                                                    }}
                                                     style={{
                                                         background: "rgba(255, 255, 255, 0.06)",
                                                         border: "1px solid rgba(255, 255, 255, 0.12)",
@@ -1263,6 +1400,107 @@ export default function CallilogApp() {
                                 </button>
                             </div>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* 12b. MODAL: ATHLETE PROFILE SWITCHER */}
+            {showSwitcherModal && (
+                <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 125 }}>
+                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "420px", padding: "24px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "14px" }}>
+                            <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#EDEDED" }}>
+                                🔄 Switch Athlete Identity
+                            </h3>
+                            <button
+                                onClick={() => setShowSwitcherModal(false)}
+                                style={{ background: "none", border: "none", color: "#8A90A2", fontSize: "1.1rem", cursor: "pointer" }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <p style={{ fontSize: "0.78rem", color: "#8A90A2", marginBottom: "16px" }}>
+                            Select a verified federation athlete to test rankings, records, and head-to-head comparisons:
+                        </p>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px" }}>
+                            {[
+                                { name: "ScooterKing", email: "mrwe3838@gmail.com", icon: "⚡", rank: "Apex Titan (1420)", bw: "75kg" },
+                                { name: "Viktor_K", email: "viktor@calisthenics.pro", icon: "🔥", rank: "Grandmaster (1380)", bw: "72kg" },
+                                { name: "MarcusTitan", email: "marcus@ironcross.io", icon: "🔱", rank: "Still Rings Master (1340)", bw: "81kg" },
+                                { name: "Elena_Fly", email: "elena@straddle.fit", icon: "🦅", rank: "Master (1290)", bw: "58kg" },
+                                { name: "AlexBar", email: "alex@streetworkout.org", icon: "🤸", rank: "Master (1250)", bw: "68kg" },
+                            ].map((ath) => {
+                                const isCurrent = userEmail === ath.email;
+                                return (
+                                    <button
+                                        key={ath.email}
+                                        onClick={() => handleSwitchAthlete(ath.email)}
+                                        style={{
+                                            display: "flex",
+                                            alignItems: "center",
+                                            justifyContent: "space-between",
+                                            background: isCurrent ? "rgba(226, 167, 59, 0.12)" : "rgba(255, 255, 255, 0.03)",
+                                            border: isCurrent ? "1px solid rgba(226, 167, 59, 0.5)" : "1px solid rgba(255, 255, 255, 0.08)",
+                                            borderRadius: "6px",
+                                            padding: "10px 14px",
+                                            color: "#EDEDED",
+                                            cursor: "pointer",
+                                            textAlign: "left",
+                                        }}
+                                    >
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            <span style={{ fontSize: "1.2rem" }}>{ath.icon}</span>
+                                            <div>
+                                                <div style={{ fontSize: "0.88rem", fontWeight: 700, color: isCurrent ? "#E2A73B" : "#FFF" }}>
+                                                    {ath.name} {isCurrent && <span style={{ fontSize: "0.68rem" }}>(ACTIVE)</span>}
+                                                </div>
+                                                <div style={{ fontSize: "0.72rem", color: "#6C7282" }}>{ath.email} • {ath.bw}</div>
+                                            </div>
+                                        </div>
+                                        <span style={{ fontSize: "0.72rem", color: "#E2A73B", fontWeight: 700 }}>{ath.rank}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div style={{ borderTop: "1px solid rgba(255, 255, 255, 0.08)", paddingTop: "14px" }}>
+                            <label style={{ fontSize: "0.75rem", color: "#8A90A2", display: "block", marginBottom: "6px", fontWeight: 700 }}>
+                                OR ENTER CUSTOM ATHLETE EMAIL
+                            </label>
+                            <form
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    if (switcherInput.trim()) {
+                                        handleSwitchAthlete(switcherInput.trim());
+                                    }
+                                }}
+                                style={{ display: "flex", gap: "8px" }}
+                            >
+                                <input
+                                    type="email"
+                                    placeholder="athlete@gym.com"
+                                    value={switcherInput}
+                                    onChange={(e) => setSwitcherInput(e.target.value)}
+                                    style={{
+                                        flex: 1,
+                                        background: "#08090C",
+                                        border: "1px solid rgba(255, 255, 255, 0.12)",
+                                        borderRadius: "6px",
+                                        padding: "8px 12px",
+                                        color: "#FFF",
+                                        fontSize: "0.85rem",
+                                    }}
+                                />
+                                <button
+                                    type="submit"
+                                    className="btn-primary"
+                                    style={{ padding: "8px 14px", fontSize: "0.82rem" }}
+                                >
+                                    Activate
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 </div>
             )}

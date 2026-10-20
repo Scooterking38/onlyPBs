@@ -13,10 +13,7 @@ export function computeDiagnostics(pbs: PBRecord[], athleteBw = 75.0) {
     for (const pb of pbs) {
         const meta = SKILL_MAP.get(pb.skill_id);
         if (!meta) continue;
-        const val = meta.type === "iso" ? Number(pb.duration || 0) : Number(pb.reps || 0);
-        const prev = peaks.get(pb.skill_id);
-        const prevVal = prev ? (meta.type === "iso" ? Number(prev.duration || 0) : Number(prev.reps || 0)) : -1;
-        if (val > prevVal) {
+        if (!peaks.has(pb.skill_id)) {
             peaks.set(pb.skill_id, pb);
         }
     }

@@ -10,7 +10,10 @@ export interface PBRecord {
     duration: number;
     proof_url?: string;
     is_verified?: boolean;
+    verification_status?: string;
     date: string;
+    bodyweight_at_time?: number;
+    is_public_proof?: boolean;
 }
 
 /**
@@ -40,15 +43,29 @@ export function scoreSinglePB(pb: PBRecord, athleteBw = 75.0): number {
     return Math.round(loadRatio * output * meta.diff * verifiedBonus * 10) / 10;
 }
 
+export function computeBaseScoreImpact(
+    pb: { skill_id: string; weight?: number; reps?: number; duration?: number },
+    athleteBw = 75.0
+): number {
+    const meta = SKILL_MAP.get(pb.skill_id);
+    if (!meta) return 0;
+
+    const bw = Math.max(10, athleteBw);
+    const loadRatio = Math.max(0.5, (bw + Number(pb.weight || 0)) / bw);
+    const rawValue = meta.type === "iso" ? Number(pb.duration || 0) : Number(pb.reps || 0);
+    const output = calculateOutput(meta.type, rawValue);
+
+    return Math.round(loadRatio * output * meta.diff * 10) / 10;
+}
+
 export function computeDualELO(pbs: PBRecord[], athleteBw = 75.0) {
     const calc = (records: PBRecord[]) => {
         const bestPerSkill = new Map<string, { cat: string; score: number }>();
         for (const r of records) {
             const meta = SKILL_MAP.get(r.skill_id);
             if (!meta) continue;
-            const score = scoreSinglePB(r, athleteBw);
-            const curr = bestPerSkill.get(r.skill_id);
-            if (!curr || score > curr.score) {
+            if (!bestPerSkill.has(r.skill_id)) {
+                const score = scoreSinglePB(r, athleteBw);
                 bestPerSkill.set(r.skill_id, { cat: meta.category, score });
             }
         }

@@ -1,4 +1,3 @@
-import { NextResponse } from "next/server";
 import { getClient, transaction } from "@/lib/db";
 import { getRequestUser } from "@/lib/server-auth";
 import { apiJson, apiOptions } from "@/lib/http";
