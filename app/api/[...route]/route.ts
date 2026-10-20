@@ -419,3 +419,58 @@ export async function POST(
     return NextResponse.json({ error: error?.message || "Internal server error" }, { status: 500 });
   }
 }
+
+// ==========================================
+// 3. DELETE DISPATCHER (Self-deletion & Admin Account Removal)
+// ==========================================
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ route: string[] }> | { route: string[] } }
+) {
+  const resolvedParams = await Promise.resolve(context.params);
+  const endpoint = (resolvedParams?.route?.[0] || "").toLowerCase();
+  const { searchParams } = new URL(req.url);
+
+  try {
+    if (endpoint === "profile" || endpoint === "account") {
+      const targetEmail = (searchParams.get("email") || "").toLowerCase().trim();
+      const requesterEmail = (
+        searchParams.get("requesterEmail") || 
+        req.headers.get("x-athlete-email") || 
+        ""
+      ).toLowerCase().trim();
+
+      if (!targetEmail) {
+        return NextResponse.json({ error: "Missing target email parameter" }, { status: 400 });
+      }
+
+      const isSelf = requesterEmail && requesterEmail === targetEmail;
+      const isAdmin = checkIsAdmin(requesterEmail);
+
+      // Authorization: Only the user themselves OR a verified Federation Admin can delete
+      if (!isSelf && !isAdmin) {
+        return NextResponse.json(
+          { error: "Unauthorized: You do not have permission to delete this account." },
+          { status: 403 }
+        );
+      }
+
+      // 1. Permanently delete all PBs & video proof records
+      await query("DELETE FROM pbs WHERE LOWER(email) = LOWER($1)", [targetEmail]);
+
+      // 2. Permanently delete the athlete profile
+      await query("DELETE FROM athletes WHERE LOWER(email) = LOWER($1)", [targetEmail]);
+
+      return NextResponse.json({
+        success: true,
+        message: `Account and records for ${targetEmail} have been permanently deleted.`,
+        deletedEmail: targetEmail,
+      });
+    }
+
+    return NextResponse.json({ error: `Not found: /api/${endpoint}` }, { status: 404 });
+  } catch (error: any) {
+    console.error(`[API DELETE /api/${endpoint}] Error:`, error);
+    return NextResponse.json({ error: error?.message || "Internal server error" }, { status: 500 });
+  }
+}
