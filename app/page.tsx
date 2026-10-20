@@ -64,7 +64,8 @@ export default function CallilogApp() {
     const [serverAdmin, setServerAdmin] = useState(false);
     const isAdmin = useMemo(() => checkIsAdmin(userEmail) || serverAdmin, [userEmail, serverAdmin]);
     const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
-
+    const [arenaSortBy, setArenaSortBy] = useState<"official" | "vault" | "verified" | "feats" | "name" | "bw">("official");
+    
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
         email: "",
@@ -953,31 +954,21 @@ export default function CallilogApp() {
                 </section>
             )}
 
-            {/* 6. TAB 3: THE ARENA */}
+{/* 6. TAB 3: THE ARENA */}
             {activeTab === "arena" && (() => {
                 const myCleanEmail = userEmail.toLowerCase().trim();
 
-                let leaderboard: Array<{
-                    email: string;
-                    athleteId?: number;
-                    displayName: string;
-                    avatarUrl: string;
-                    avatarIcon: string;
-                    isMasked: boolean;
-                    officialELO: number;
-                    unofficialELO: number;
-                    badge: { title: string; color: string; tier?: string; minELO?: number };
-                    verifiedCount: number;
-                    rawPbs: PBRecord[];
-                    bw: number;
-                    topFeats?: any[];
-                }> = [];
+                // Build a unified athletes map so unverified athletes from allPbs are never omitted
+                const athletesMap = new Map<string, any>();
 
-                if (leaderboardData && leaderboardData.length > 0) {
-                    leaderboard = leaderboardData.map((ath) => {
+                // 1. Seed from server leaderboard if available
+                if (Array.isArray(leaderboardData) && leaderboardData.length > 0) {
+                    leaderboardData.forEach((ath) => {
+                        const key = ath.id ? String(ath.id) : (ath.email || "").toLowerCase().trim();
+                        if (!key) return;
                         const athPbs = allPbs.filter((p) => (p.email || "").toLowerCase() === (ath.email || "").toLowerCase());
-                        return {
-                            email: ath.email,
+                        athletesMap.set(key, {
+                            email: (ath.email || "").toLowerCase().trim(),
                             athleteId: ath.id,
                             displayName: ath.displayName || ath.email?.split("@")[0] || "Athlete",
                             avatarUrl: ath.avatarUrl || "",
@@ -990,88 +981,170 @@ export default function CallilogApp() {
                             rawPbs: athPbs,
                             bw: Number(ath.bodyweightKg) || 75.0,
                             topFeats: ath.topFeats || [],
-                        };
+                        });
                     });
-                } else {
-                    const athletesMap = new Map<string, any>();
-                    if (myCleanEmail) {
-                        athletesMap.set(String(profile.id ?? myCleanEmail), {
+                }
+
+                // 2. Include all athletes with unverified / vault PBs from allPbs
+                allPbs.forEach((p) => {
+                    const athleteId = Number(p.athlete_id);
+                    const key = athleteId > 0 ? String(athleteId) : (p.email || "").toLowerCase().trim();
+                    if (!key) return;
+
+                    if (!athletesMap.has(key)) {
+                        athletesMap.set(key, {
+                            email: (p.email || "").toLowerCase().trim(),
+                            athleteId: athleteId > 0 ? athleteId : undefined,
+                            displayName: p.display_name || p.email?.split("@")[0] || "Athlete",
+                            avatarUrl: p.avatar_url || "",
+                            avatarIcon: p.avatar_icon || "⚡",
+                            isMasked: Boolean(p.is_masked),
+                            officialELO: 0,
+                            unofficialELO: 0,
+                            badge: getRankBadge(0),
+                            verifiedCount: 0,
+                            rawPbs: [],
+                            bw: Number(p.bodyweight_at_time) || 75.0,
+                            topFeats: [],
+                        });
+                    }
+
+                    const entry = athletesMap.get(key)!;
+                    if (!entry.rawPbs.some((existing: PBRecord) => existing.id === p.id)) {
+                        entry.rawPbs.push(p);
+                    }
+                });
+
+                // 3. Ensure the current active user is present
+                if (myCleanEmail) {
+                    const myKey = profile.id ? String(profile.id) : myCleanEmail;
+                    if (!athletesMap.has(myKey)) {
+                        athletesMap.set(myKey, {
                             email: myCleanEmail,
                             athleteId: profile.id,
                             displayName: profile.display_name || user?.displayName || myCleanEmail.split("@")[0],
                             avatarUrl: profile.avatar_url || user?.photoURL || "",
                             avatarIcon: profile.avatar_icon || "⚡",
                             isMasked: Boolean(profile.is_masked),
-                            pbs: myPbs,
+                            officialELO,
+                            unofficialELO,
+                            badge,
+                            verifiedCount: myPbs.filter((p) => p.is_verified).length,
+                            rawPbs: myPbs,
                             bw: athleteBw,
+                            topFeats: [],
                         });
+                    } else {
+                        const me = athletesMap.get(myKey)!;
+                        me.rawPbs = myPbs;
+                        me.bw = athleteBw;
+                        me.displayName = profile.display_name || me.displayName;
+                        me.avatarUrl = profile.avatar_url || me.avatarUrl;
+                        me.avatarIcon = profile.avatar_icon || me.avatarIcon;
+                        me.isMasked = Boolean(profile.is_masked);
                     }
-
-                    allPbs.forEach((p) => {
-                        const athleteId = Number(p.athlete_id);
-                        const key = athleteId > 0 ? String(athleteId) : (p.email || "");
-                        if (!key) return;
-                        if (!athletesMap.has(key)) {
-                            athletesMap.set(key, {
-                                email: p.email || "",
-                                athleteId: athleteId > 0 ? athleteId : undefined,
-                                displayName: p.display_name || "Athlete",
-                                avatarUrl: p.avatar_url || "",
-                                avatarIcon: p.avatar_icon || "⚡",
-                                isMasked: Boolean(p.is_masked),
-                                pbs: [],
-                                bw: Number(p.bodyweight_at_time) || 75.0,
-                            });
-                        }
-                        athletesMap.get(key)!.pbs.push(p);
-                    });
-
-                    leaderboard = Array.from(athletesMap.values())
-                        .filter((ath) => {
-                            const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
-                            return !ath.isMasked || isMe;
-                        })
-                        .map((ath) => {
-                            const { officialELO, unofficialELO } = computeDualELO(ath.pbs, ath.bw);
-                            const rankBadge = getRankBadge(officialELO);
-                            const verifiedCount = ath.pbs.filter((p: PBRecord) => p.is_verified).length;
-                            return {
-                                email: ath.email,
-                                athleteId: ath.athleteId,
-                                displayName: ath.displayName,
-                                avatarUrl: ath.avatarUrl,
-                                avatarIcon: ath.avatarIcon,
-                                isMasked: ath.isMasked,
-                                officialELO,
-                                unofficialELO,
-                                badge: rankBadge,
-                                verifiedCount,
-                                rawPbs: ath.pbs,
-                                bw: ath.bw,
-                            };
-                        })
-                        .sort((a, b) => b.officialELO - a.officialELO);
                 }
+
+                // 4. Calculate Dual ELOs for every athlete (including unverified users)
+                const computedAthletes = Array.from(athletesMap.values()).map((ath) => {
+                    const { officialELO: calcOfficial, unofficialELO: calcVault } = computeDualELO(ath.rawPbs, ath.bw);
+                    const verifiedCount = ath.rawPbs.filter((p: PBRecord) => p.is_verified).length;
+                    const effOfficial = ath.officialELO || calcOfficial;
+                    const effVault = ath.unofficialELO || calcVault;
+                    return {
+                        ...ath,
+                        officialELO: effOfficial,
+                        unofficialELO: effVault,
+                        badge: effOfficial > 0 ? ath.badge : getRankBadge(effOfficial),
+                        verifiedCount: Math.max(ath.verifiedCount, verifiedCount),
+                        totalFeats: ath.rawPbs.length,
+                    };
+                });
+
+                // 5. Visibility rules:
+                // - Unverified users: VISIBLE to everyone
+                // - Ghost users: VISIBLE ONLY to admins (or to the user themselves)
+                const visibleAthletes = computedAthletes.filter((ath) => {
+                    const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
+                    if (isMe) return true;
+                    if (ath.isMasked && !isAdmin) return false; // regular users cannot see ghost profiles
+                    return true;
+                });
+
+                // 6. Sort according to dropdown selection
+                const sortedAthletes = [...visibleAthletes].sort((a, b) => {
+                    switch (arenaSortBy) {
+                        case "vault":
+                            return b.unofficialELO - a.unofficialELO || b.officialELO - a.officialELO;
+                        case "verified":
+                            return b.verifiedCount - a.verifiedCount || b.officialELO - a.officialELO;
+                        case "feats":
+                            return b.totalFeats - a.totalFeats || b.unofficialELO - a.unofficialELO;
+                        case "name":
+                            return a.displayName.localeCompare(b.displayName);
+                        case "bw":
+                            return b.bw - a.bw;
+                        case "official":
+                        default:
+                            return b.officialELO - a.officialELO || b.unofficialELO - a.unofficialELO;
+                    }
+                });
 
                 return (
                     <section className="titanium-slab" style={{ padding: "20px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "16px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "12px" }}>
+                        {/* Arena Header & Dropdown Toolbar */}
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "12px" }}>
                             <div>
                                 <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#EDEDED" }}>
-                                    🏆 The Arena // Official ELO Leaderboard
+                                    🏆 The Arena // Global Leaderboard
                                 </h2>
-                                <div style={{ fontSize: "0.75rem", color: "#6C7282", marginTop: "2px" }}>
-                                    Ranked strictly by verified competitive power scores.
+                                <div style={{ fontSize: "0.75rem", color: "#6C7282", marginTop: "3px" }}>
+                                    {sortedAthletes.length} Athletes (Unverified Vault & Certified Competitors)
+                                    {isAdmin && <span style={{ color: "#E2A73B", marginLeft: "6px" }}>• Admin Visibility Active</span>}
                                 </div>
                             </div>
-                            <div style={{ fontSize: "0.75rem", color: "#8A90A2", fontWeight: 600 }}>{leaderboard.length} Ranked Athletes</div>
+
+                            {/* Dropdown Selector */}
+                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <label htmlFor="arena_sort_select" style={{ fontSize: "0.72rem", color: "#8A90A2", fontWeight: 700, textTransform: "uppercase" }}>
+                                    Sort By:
+                                </label>
+                                <select
+                                    id="arena_sort_select"
+                                    value={arenaSortBy}
+                                    onChange={(e) => setArenaSortBy(e.target.value as any)}
+                                    style={{
+                                        background: "#08090C",
+                                        color: "#EDEDED",
+                                        border: "1px solid rgba(255, 255, 255, 0.15)",
+                                        borderRadius: "6px",
+                                        padding: "6px 12px",
+                                        fontSize: "0.78rem",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                        outline: "none",
+                                    }}
+                                >
+                                    <option value="official">Official Verified ELO</option>
+                                    <option value="vault">Vault ELO (Unverified & Lifetime)</option>
+                                    <option value="verified">Most Certified Feats</option>
+                                    <option value="feats">Total Vault Logs</option>
+                                    <option value="name">Athlete Name (A → Z)</option>
+                                    <option value="bw">Bodyweight (Heavy to Light)</option>
+                                </select>
+                            </div>
                         </div>
 
+                        {/* Athlete Cards */}
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                            {leaderboard.map((ath, idx) => {
+                            {sortedAthletes.map((ath, idx) => {
                                 const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
+                                const isUnverified = ath.verifiedCount === 0;
                                 const medalColors = ["#F59E0B", "#E2E8F0", "#CD7F32"];
-                                const rankColor = idx < 3 ? medalColors[idx] : "#525666";
+                                const rankColor = idx < 3 && arenaSortBy === "official" ? medalColors[idx] : "#525666";
+
+                                const displayScore = arenaSortBy === "vault" ? ath.unofficialELO : ath.officialELO;
+                                const displayScoreLabel = arenaSortBy === "vault" ? "Vault ELO" : "Official ELO";
 
                                 return (
                                     <div
@@ -1083,7 +1156,11 @@ export default function CallilogApp() {
                                             padding: "12px 14px",
                                             borderRadius: "6px",
                                             background: isMe ? "rgba(226, 167, 59, 0.05)" : "rgba(255, 255, 255, 0.02)",
-                                            border: isMe ? "1px solid rgba(226, 167, 59, 0.3)" : "1px solid rgba(255, 255, 255, 0.04)",
+                                            border: isMe
+                                                ? "1px solid rgba(226, 167, 59, 0.3)"
+                                                : isUnverified
+                                                ? "1px solid rgba(255, 255, 255, 0.04)"
+                                                : "1px solid rgba(255, 255, 255, 0.08)",
                                             flexWrap: "wrap",
                                             gap: "10px",
                                         }}
@@ -1096,23 +1173,35 @@ export default function CallilogApp() {
                                             {renderAvatar(ath.avatarUrl, ath.avatarIcon, 36)}
 
                                             <div>
-                                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                                    <span style={{ fontWeight: 700, fontSize: "0.95rem", color: isMe ? "#FFF" : "#EDEDED" }}>{ath.displayName}</span>
+                                                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                                                    <span style={{ fontWeight: 700, fontSize: "0.95rem", color: isMe ? "#FFF" : "#EDEDED" }}>
+                                                        {ath.displayName}
+                                                    </span>
                                                     {isMe && <span style={{ fontSize: "0.65rem", color: "#E2A73B", fontWeight: 700 }}>(YOU)</span>}
-                                                    {ath.isMasked && <span style={{ fontSize: "0.65rem", color: "#A78BFA", fontWeight: 700 }}>👻 GHOST</span>}
-                                                </div>
-                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px", flexWrap: "wrap" }}>
-                                                    <span className="pill-badge pill-gold" style={{ fontSize: "0.6rem", padding: "1px 5px" }}>
-                                                        {ath.badge.title}
-                                                    </span>
-                                                    <span style={{ fontSize: "0.7rem", color: "#6C7282" }}>
-                                                        {ath.verifiedCount} {ath.verifiedCount === 1 ? "feat" : "feats"} verified
-                                                    </span>
-                                                    {ath.topFeats && ath.topFeats.length > 0 && (
-                                                        <span style={{ fontSize: "0.68rem", color: "#A78BFA" }}>
-                                                            • Best: {ath.topFeats[0].skillName} ({ath.topFeats[0].duration ? `${ath.topFeats[0].duration}s` : `${ath.topFeats[0].reps}r`})
+                                                    {ath.isMasked && (
+                                                        <span className="pill-badge pill-slate" style={{ fontSize: "0.6rem", color: "#A78BFA", border: "1px solid rgba(167, 139, 250, 0.4)" }}>
+                                                            👻 GHOST {isAdmin && !isMe ? "(ADMIN EYE)" : ""}
                                                         </span>
                                                     )}
+                                                </div>
+
+                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px", flexWrap: "wrap" }}>
+                                                    {isUnverified ? (
+                                                        <span className="pill-badge pill-slate" style={{ fontSize: "0.6rem", color: "#8A90A2", padding: "1px 5px" }}>
+                                                            UNVERIFIED (VAULT ONLY)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="pill-badge pill-gold" style={{ fontSize: "0.6rem", padding: "1px 5px" }}>
+                                                            {ath.badge.title}
+                                                        </span>
+                                                    )}
+
+                                                    <span style={{ fontSize: "0.7rem", color: ath.verifiedCount > 0 ? "#10B981" : "#6C7282" }}>
+                                                        {ath.verifiedCount} certified
+                                                    </span>
+                                                    <span style={{ fontSize: "0.7rem", color: "#525666" }}>
+                                                        • {ath.totalFeats} logged • {ath.bw}kg
+                                                    </span>
                                                 </div>
                                             </div>
                                         </div>
@@ -1140,12 +1229,13 @@ export default function CallilogApp() {
                                                     ⚔️ Compare
                                                 </button>
                                             )}
+
                                             <div style={{ textAlign: "right" }}>
-                                                <div className="num-font" style={{ fontSize: "1.4rem", fontWeight: 800, color: "#EDEDED", lineHeight: 1 }}>
-                                                    {ath.officialELO}
+                                                <div className="num-font" style={{ fontSize: "1.4rem", fontWeight: 800, color: displayScore > 0 ? "#EDEDED" : "#525666", lineHeight: 1 }}>
+                                                    {displayScore}
                                                 </div>
-                                                <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.05em", textTransform: "uppercase", marginTop: "3px" }}>
-                                                    Official ELO
+                                                <div style={{ fontSize: "0.62rem", fontWeight: 700, color: arenaSortBy === "vault" ? "#8A90A2" : "#E2A73B", letterSpacing: "0.05em", textTransform: "uppercase", marginTop: "3px" }}>
+                                                    {displayScoreLabel}
                                                 </div>
                                             </div>
                                         </div>
