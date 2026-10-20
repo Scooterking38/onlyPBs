@@ -46,23 +46,20 @@ const checkIsAdmin = (email: string | null | undefined): boolean => {
     return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
-// Converts Google Drive, Dropbox, and Imgur share links into direct raw image URLs
+// Normalizes Google Drive, Dropbox, and Imgur links into direct image file streams
 function normalizeImageUrl(url?: string): string {
     if (!url) return "";
     const clean = url.trim();
 
-    // Google Drive share link -> direct CDN link
     const gDriveMatch = clean.match(/drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/);
     if (gDriveMatch && gDriveMatch[1]) {
         return `https://lh3.googleusercontent.com/d/${gDriveMatch[1]}`;
     }
 
-    // Dropbox share link -> raw image stream
     if (clean.includes("dropbox.com")) {
         return clean.replace(/[?&]dl=0/, "").replace(/\?raw=1$/, "") + "?raw=1";
     }
 
-    // Imgur direct image resolution
     if (/^https?:\/\/imgur\.com\/([a-zA-Z0-9]+)$/.test(clean)) {
         return clean.replace("imgur.com", "i.imgur.com") + ".png";
     }
@@ -70,7 +67,7 @@ function normalizeImageUrl(url?: string): string {
     return clean;
 }
 
-// Resilient Avatar with hotlink bypass and graceful fallback
+// Resilient Avatar Component with hotlink protection bypass
 function AthleteAvatar({
     url,
     icon = "⚡",
@@ -151,8 +148,10 @@ export default function CallilogApp() {
     const [serverAdmin, setServerAdmin] = useState(false);
     const isAdmin = useMemo(() => checkIsAdmin(userEmail) || serverAdmin, [userEmail, serverAdmin]);
     const [leaderboardData, setLeaderboardData] = useState<any[]>([]);
+
+    // Arena Sort by selection
     const [arenaSortBy, setArenaSortBy] = useState<"official" | "vault" | "verified" | "feats" | "name" | "bw">("official");
-    
+
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
         email: "",
@@ -172,6 +171,25 @@ export default function CallilogApp() {
     const [showFighterCard, setShowFighterCard] = useState(false);
     const [showProfileModal, setShowProfileModal] = useState(false);
     const [isExportingCard, setIsExportingCard] = useState(false);
+
+    // Inspector Modal for any clicked athlete in the Arena
+    const [inspectingAthlete, setInspectingAthlete] = useState<{
+        email: string;
+        athleteId?: number;
+        displayName: string;
+        avatarUrl: string;
+        avatarIcon: string;
+        isMasked: boolean;
+        officialELO: number;
+        unofficialELO: number;
+        badge: { title: string; color: string; tier?: string; minELO?: number };
+        verifiedCount: number;
+        rawPbs: PBRecord[];
+        bw: number;
+        tagline?: string;
+        discipline?: string;
+        totalFeats?: number;
+    } | null>(null);
 
     // Head-to-Head & Video Preview
     const [compareTarget, setCompareTarget] = useState<{ displayName: string; pbs: PBRecord[]; bw: number } | null>(null);
@@ -216,13 +234,11 @@ export default function CallilogApp() {
         setLoginError(null);
         try {
             const result = await login();
-            if (result?.user) {
+            if (result?.user?.email) {
+                const em = result.user.email.toLowerCase().trim();
                 setUser(result.user);
-                if (result.user.email) {
-                    const em = result.user.email.toLowerCase().trim();
-                    if (typeof window !== "undefined") {
-                        localStorage.setItem("callilog_athlete_email", em);
-                    }
+                if (typeof window !== "undefined") {
+                    localStorage.setItem("callilog_athlete_email", em);
                 }
             }
         } catch (err: unknown) {
@@ -376,7 +392,7 @@ export default function CallilogApp() {
         }
     }, [userEmail]);
 
-    // Keyboard shortcut listener
+    // Keyboard shortcut listener (Ctrl/Cmd + K to search)
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -393,7 +409,6 @@ export default function CallilogApp() {
     const badge = getRankBadge(officialELO);
     const diagnostics = computeDiagnostics(myPbs, athleteBw);
 
-    // Latest log unconditionally overwrites older entries
     const peaks = useMemo(() => {
         const map = new Map<string, PBRecord>();
         myPbs.forEach((p) => {
@@ -402,7 +417,6 @@ export default function CallilogApp() {
         return map;
     }, [myPbs]);
 
-    // Top 3 Feats
     const top3Feats = useMemo(() => {
         return Array.from(peaks.values())
             .map((p) => ({ ...p, score: scoreSinglePB(p, athleteBw) }))
@@ -410,7 +424,6 @@ export default function CallilogApp() {
             .slice(0, 3);
     }, [peaks, athleteBw]);
 
-    // Filter skills
     const displayedSkills = useMemo(() => {
         if (searchQuery.trim()) {
             const q = searchQuery.toLowerCase();
@@ -419,7 +432,6 @@ export default function CallilogApp() {
         return SKILLS.filter((s) => s.category === selectedBranch);
     }, [searchQuery, selectedBranch]);
 
-    // Calculate live 1RM preview in Record Modal
     const live1RM = useMemo(() => {
         if (!activeModalSkill) return null;
         return computeCalisthenics1RM(athleteBw, ballast, repsOrDur);
@@ -433,6 +445,7 @@ export default function CallilogApp() {
         const reps = activeModalSkill.type === "dyn" ? Number(repsOrDur) : 0;
         const duration = activeModalSkill.type === "iso" ? Number(repsOrDur) : 0;
         const wt = Number(ballast) || 0;
+        const cleanProof = proofUrl.trim();
 
         // Optimistically update myPbs immediately
         setMyPbs((prev) => {
@@ -444,9 +457,9 @@ export default function CallilogApp() {
                 weight: wt,
                 reps,
                 duration,
-                proof_url: proofUrl,
-                is_verified: !proofUrl || Boolean(proofUrl),
-                verification_status: proofUrl ? "pending" : "unverified",
+                proof_url: cleanProof,
+                is_verified: false,
+                verification_status: cleanProof ? "pending" : "unverified",
                 date: new Date().toISOString().split("T")[0],
                 bodyweight_at_time: athleteBw,
                 is_public_proof: isPublic,
@@ -468,7 +481,7 @@ export default function CallilogApp() {
                     weight: wt,
                     reps,
                     duration,
-                    proofUrl,
+                    proofUrl: cleanProof,
                     isPublic,
                 }),
             });
@@ -477,7 +490,7 @@ export default function CallilogApp() {
         }
 
         setActiveModalSkill(null);
-        await Promise.all([fetchPbs(), fetchLeaderboard()]);
+        await Promise.all([fetchPbs(), fetchLeaderboard(), fetchAdminPbs()]);
     };
 
     const handleSaveProfile = async (e: React.FormEvent) => {
@@ -485,9 +498,8 @@ export default function CallilogApp() {
         if (!userEmail) return;
         const effectiveEmail = userEmail;
         const newBw = Number(editBw) || 75.0;
-        const cleanAvatarUrl = editAvatarUrl.trim();
+        const cleanAvatar = editAvatarUrl.trim();
 
-        // Optimistically update local profile state
         setProfile((prev) => ({
             ...prev,
             email: effectiveEmail,
@@ -496,7 +508,7 @@ export default function CallilogApp() {
             tagline: editTagline,
             discipline: editDiscipline,
             avatar_icon: editIcon,
-            avatar_url: cleanAvatarUrl,
+            avatar_url: cleanAvatar,
             is_masked: editMasked,
         }));
 
@@ -517,8 +529,8 @@ export default function CallilogApp() {
                     discipline: editDiscipline,
                     avatarIcon: editIcon,
                     avatar_icon: editIcon,
-                    avatarUrl: cleanAvatarUrl,
-                    avatar_url: cleanAvatarUrl,
+                    avatarUrl: cleanAvatar,
+                    avatar_url: cleanAvatar,
                     isMasked: editMasked,
                     is_masked: editMasked,
                 }),
@@ -531,12 +543,10 @@ export default function CallilogApp() {
         await Promise.all([fetchProfile(), fetchPbs(), fetchLeaderboard()]);
     };
 
-    // Avatar Renderer
     const renderAvatar = (url?: string, icon?: string, size = 44) => {
         return <AthleteAvatar url={url} icon={icon} size={size} fallbackPhoto={user?.photoURL} />;
     };
 
-    // Radar points generator
     const getRadarPoints = (axes: { score: number }[]) => {
         const center = 100;
         const radius = 70;
@@ -554,7 +564,6 @@ export default function CallilogApp() {
 
     const radarPoints = useMemo(() => getRadarPoints(diagnostics.radarAxes), [diagnostics.radarAxes]);
 
-    // Head-to-Head Comparison Diagnostics
     const compareDiagnostics = useMemo(() => {
         if (!compareTarget) return null;
         return computeDiagnostics(compareTarget.pbs, compareTarget.bw);
@@ -636,7 +645,7 @@ export default function CallilogApp() {
                             FEDERATION ADMINISTRATOR DIRECTORY
                         </div>
                         <p style={{ fontSize: "0.78rem", color: "#8A90A2", lineHeight: 1.5, margin: "0 0 10px 0" }}>
-                            Authorized Google accounts automatically receive full administrator access (Admin 1 through 4) upon sign-in:
+                            Authorized Google accounts automatically receive full administrator access upon sign-in:
                         </p>
                         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", fontSize: "0.75rem" }}>
                             <div style={{ background: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)", borderRadius: "6px", padding: "8px 10px" }}>
@@ -851,28 +860,28 @@ export default function CallilogApp() {
                             return (
                                 <div key={skill.id} className="titanium-slab" style={{ padding: "14px 18px", borderLeft: `3px solid ${tierInfo.color}` }}>
                                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
-                    <span
-                        style={{
-                            fontSize: "0.65rem",
-                            fontWeight: 700,
-                            letterSpacing: "0.06em",
-                            color: tierInfo.color,
-                            background: tierInfo.badgeBg,
-                            border: `1px solid ${tierInfo.border}`,
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                        }}
-                    >
-                      {tierInfo.label} &nbsp;•&nbsp; ×{skill.diff.toFixed(1)}
-                    </span>
+                                        <span
+                                            style={{
+                                                fontSize: "0.65rem",
+                                                fontWeight: 700,
+                                                letterSpacing: "0.06em",
+                                                color: tierInfo.color,
+                                                background: tierInfo.badgeBg,
+                                                border: `1px solid ${tierInfo.border}`,
+                                                padding: "2px 6px",
+                                                borderRadius: "4px",
+                                            }}
+                                        >
+                                            {tierInfo.label} &nbsp;•&nbsp; ×{skill.diff.toFixed(1)}
+                                        </span>
                                         {peak?.is_verified ? (
                                             <span className="pill-badge pill-gold">🏅 OFFICIAL VERIFIED</span>
                                         ) : peak ? (
                                             <span className="pill-badge pill-slate">VAULT LOGGED</span>
                                         ) : (
                                             <span className="pill-badge pill-slate" style={{ color: "#525666" }}>
-                        UNRECORDED
-                      </span>
+                                                UNRECORDED
+                                            </span>
                                         )}
                                     </div>
 
@@ -881,10 +890,10 @@ export default function CallilogApp() {
                                             <div style={{ fontSize: "1.05rem", fontWeight: 700, color: "#EDEDED" }}>{skill.name}</div>
                                             {peak ? (
                                                 <div style={{ display: "flex", alignItems: "baseline", gap: "8px", marginTop: "3px" }}>
-                          <span className="num-font" style={{ fontSize: "1.15rem", fontWeight: 700, color: "#EDEDED" }}>
-                            {skill.type === "iso" ? peak.duration : peak.reps}
-                              {unit}
-                          </span>
+                                                    <span className="num-font" style={{ fontSize: "1.15rem", fontWeight: 700, color: "#EDEDED" }}>
+                                                        {skill.type === "iso" ? peak.duration : peak.reps}
+                                                        {unit}
+                                                    </span>
                                                     {peak.weight > 0 && <span style={{ fontSize: "0.8rem", color: "#7E8494" }}>@ +{peak.weight}kg</span>}
                                                     <span style={{ fontSize: "0.7rem", color: "#525666" }}>Logged {peak.date}</span>
                                                 </div>
@@ -937,8 +946,8 @@ export default function CallilogApp() {
                                             <span style={{ color: "#E2A73B", fontWeight: 700 }}>NEXT EVOLUTION →</span>
                                             <span style={{ color: "#EDEDED", fontWeight: 600 }}>{nextStep.name}</span>
                                             <span>
-                        (Tier {nextStep.tier} · ×{nextStep.diff.toFixed(1)})
-                      </span>
+                                                (Tier {nextStep.tier} · ×{nextStep.diff.toFixed(1)})
+                                            </span>
                                         </div>
                                     )}
                                 </div>
@@ -952,9 +961,9 @@ export default function CallilogApp() {
             {activeTab === "intel" && (
                 <section style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                     <div className="titanium-slab" style={{ padding: "16px 20px", borderLeft: "3px solid #E2A73B" }}>
-            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-              Diagnostic Specialization
-            </span>
+                        <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                            Diagnostic Specialization
+                        </span>
                         <div style={{ fontSize: "1.25rem", fontWeight: 700, color: "#EDEDED", marginTop: "3px" }}>{diagnostics.archetype}</div>
                         <p style={{ fontSize: "0.82rem", color: "#8A90A2", margin: "4px 0 0 0" }}>{diagnostics.archetypeDesc}</p>
                     </div>
@@ -991,9 +1000,9 @@ export default function CallilogApp() {
 
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
                         <div className="titanium-slab" style={{ padding: "16px" }}>
-              <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#6C7282", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Push / Pull Balance Ratio
-              </span>
+                            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#6C7282", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                Push / Pull Balance Ratio
+                            </span>
                             <div className="num-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "#EDEDED", marginTop: "4px" }}>
                                 {diagnostics.pushPullRatio}×
                             </div>
@@ -1003,9 +1012,9 @@ export default function CallilogApp() {
                         </div>
 
                         <div className="titanium-slab" style={{ padding: "16px" }}>
-              <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#EF4444", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                Weak-Link Bottleneck
-              </span>
+                            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#EF4444", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                                Weak-Link Bottleneck
+                            </span>
                             <div style={{ fontSize: "1.8rem", fontWeight: 800, color: "#EDEDED", marginTop: "4px" }}>
                                 {diagnostics.bottleneck.toUpperCase()}
                             </div>
@@ -1015,14 +1024,13 @@ export default function CallilogApp() {
                 </section>
             )}
 
-{/* 6. TAB 3: THE ARENA */}
+            {/* 6. TAB 3: THE ARENA */}
             {activeTab === "arena" && (() => {
                 const myCleanEmail = userEmail.toLowerCase().trim();
 
-                // Build a unified athletes map so unverified athletes from allPbs are never omitted
                 const athletesMap = new Map<string, any>();
 
-                // 1. Seed from server leaderboard if available
+                // 1. Seed from server leaderboard
                 if (Array.isArray(leaderboardData) && leaderboardData.length > 0) {
                     leaderboardData.forEach((ath) => {
                         const key = ath.id ? String(ath.id) : (ath.email || "").toLowerCase().trim();
@@ -1041,6 +1049,8 @@ export default function CallilogApp() {
                             verifiedCount: Number(ath.verifiedCount) || 0,
                             rawPbs: athPbs,
                             bw: Number(ath.bodyweightKg) || 75.0,
+                            tagline: ath.tagline || "",
+                            discipline: ath.discipline || "Statics & Holds",
                             topFeats: ath.topFeats || [],
                         });
                     });
@@ -1066,6 +1076,8 @@ export default function CallilogApp() {
                             verifiedCount: 0,
                             rawPbs: [],
                             bw: Number(p.bodyweight_at_time) || 75.0,
+                            tagline: "",
+                            discipline: "Statics & Holds",
                             topFeats: [],
                         });
                     }
@@ -1079,692 +1091,4 @@ export default function CallilogApp() {
                 // 3. Ensure the current active user is present
                 if (myCleanEmail) {
                     const myKey = profile.id ? String(profile.id) : myCleanEmail;
-                    if (!athletesMap.has(myKey)) {
-                        athletesMap.set(myKey, {
-                            email: myCleanEmail,
-                            athleteId: profile.id,
-                            displayName: profile.display_name || user?.displayName || myCleanEmail.split("@")[0],
-                            avatarUrl: profile.avatar_url || user?.photoURL || "",
-                            avatarIcon: profile.avatar_icon || "⚡",
-                            isMasked: Boolean(profile.is_masked),
-                            officialELO,
-                            unofficialELO,
-                            badge,
-                            verifiedCount: myPbs.filter((p) => p.is_verified).length,
-                            rawPbs: myPbs,
-                            bw: athleteBw,
-                            topFeats: [],
-                        });
-                    } else {
-                        const me = athletesMap.get(myKey)!;
-                        me.rawPbs = myPbs;
-                        me.bw = athleteBw;
-                        me.displayName = profile.display_name || me.displayName;
-                        me.avatarUrl = profile.avatar_url || me.avatarUrl;
-                        me.avatarIcon = profile.avatar_icon || me.avatarIcon;
-                        me.isMasked = Boolean(profile.is_masked);
-                    }
-                }
-
-                // 4. Calculate Dual ELOs for every athlete (including unverified users)
-                const computedAthletes = Array.from(athletesMap.values()).map((ath) => {
-                    const { officialELO: calcOfficial, unofficialELO: calcVault } = computeDualELO(ath.rawPbs, ath.bw);
-                    const verifiedCount = ath.rawPbs.filter((p: PBRecord) => p.is_verified).length;
-                    const effOfficial = ath.officialELO || calcOfficial;
-                    const effVault = ath.unofficialELO || calcVault;
-                    return {
-                        ...ath,
-                        officialELO: effOfficial,
-                        unofficialELO: effVault,
-                        badge: effOfficial > 0 ? ath.badge : getRankBadge(effOfficial),
-                        verifiedCount: Math.max(ath.verifiedCount, verifiedCount),
-                        totalFeats: ath.rawPbs.length,
-                    };
-                });
-
-                // 5. Visibility rules:
-                // - Unverified users: VISIBLE to everyone
-                // - Ghost users: VISIBLE ONLY to admins (or to the user themselves)
-                const visibleAthletes = computedAthletes.filter((ath) => {
-                    const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
-                    if (isMe) return true;
-                    if (ath.isMasked && !isAdmin) return false; // regular users cannot see ghost profiles
-                    return true;
-                });
-
-                // 6. Sort according to dropdown selection
-                const sortedAthletes = [...visibleAthletes].sort((a, b) => {
-                    switch (arenaSortBy) {
-                        case "vault":
-                            return b.unofficialELO - a.unofficialELO || b.officialELO - a.officialELO;
-                        case "verified":
-                            return b.verifiedCount - a.verifiedCount || b.officialELO - a.officialELO;
-                        case "feats":
-                            return b.totalFeats - a.totalFeats || b.unofficialELO - a.unofficialELO;
-                        case "name":
-                            return a.displayName.localeCompare(b.displayName);
-                        case "bw":
-                            return b.bw - a.bw;
-                        case "official":
-                        default:
-                            return b.officialELO - a.officialELO || b.unofficialELO - a.unofficialELO;
-                    }
-                });
-
-                return (
-                    <section className="titanium-slab" style={{ padding: "20px" }}>
-                        {/* Arena Header & Dropdown Toolbar */}
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px", marginBottom: "16px", borderBottom: "1px solid rgba(255,255,255,0.06)", paddingBottom: "12px" }}>
-                            <div>
-                                <h2 style={{ fontSize: "1.1rem", fontWeight: 700, margin: 0, color: "#EDEDED" }}>
-                                    🏆 The Arena // Global Leaderboard
-                                </h2>
-                                <div style={{ fontSize: "0.75rem", color: "#6C7282", marginTop: "3px" }}>
-                                    {sortedAthletes.length} Athletes (Unverified Vault & Certified Competitors)
-                                    {isAdmin && <span style={{ color: "#E2A73B", marginLeft: "6px" }}>• Admin Visibility Active</span>}
-                                </div>
-                            </div>
-
-                            {/* Dropdown Selector */}
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <label htmlFor="arena_sort_select" style={{ fontSize: "0.72rem", color: "#8A90A2", fontWeight: 700, textTransform: "uppercase" }}>
-                                    Sort By:
-                                </label>
-                                <select
-                                    id="arena_sort_select"
-                                    value={arenaSortBy}
-                                    onChange={(e) => setArenaSortBy(e.target.value as any)}
-                                    style={{
-                                        background: "#08090C",
-                                        color: "#EDEDED",
-                                        border: "1px solid rgba(255, 255, 255, 0.15)",
-                                        borderRadius: "6px",
-                                        padding: "6px 12px",
-                                        fontSize: "0.78rem",
-                                        fontWeight: 600,
-                                        cursor: "pointer",
-                                        outline: "none",
-                                    }}
-                                >
-                                    <option value="official">Official Verified ELO</option>
-                                    <option value="vault">Vault ELO (Unverified & Lifetime)</option>
-                                    <option value="verified">Most Certified Feats</option>
-                                    <option value="feats">Total Vault Logs</option>
-                                    <option value="name">Athlete Name (A → Z)</option>
-                                    <option value="bw">Bodyweight (Heavy to Light)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        {/* Athlete Cards */}
-                        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                            {sortedAthletes.map((ath, idx) => {
-                                const isMe = (ath.athleteId != null && ath.athleteId === profile.id) || ath.email === myCleanEmail;
-                                const isUnverified = ath.verifiedCount === 0;
-                                const medalColors = ["#F59E0B", "#E2E8F0", "#CD7F32"];
-                                const rankColor = idx < 3 && arenaSortBy === "official" ? medalColors[idx] : "#525666";
-
-                                const displayScore = arenaSortBy === "vault" ? ath.unofficialELO : ath.officialELO;
-                                const displayScoreLabel = arenaSortBy === "vault" ? "Vault ELO" : "Official ELO";
-
-                                return (
-                                    <div
-                                        key={ath.athleteId ?? ath.email}
-                                        style={{
-                                            display: "flex",
-                                            justifyContent: "space-between",
-                                            alignItems: "center",
-                                            padding: "12px 14px",
-                                            borderRadius: "6px",
-                                            background: isMe ? "rgba(226, 167, 59, 0.05)" : "rgba(255, 255, 255, 0.02)",
-                                            border: isMe
-                                                ? "1px solid rgba(226, 167, 59, 0.3)"
-                                                : isUnverified
-                                                ? "1px solid rgba(255, 255, 255, 0.04)"
-                                                : "1px solid rgba(255, 255, 255, 0.08)",
-                                            flexWrap: "wrap",
-                                            gap: "10px",
-                                        }}
-                                    >
-                                        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                                            <span className="num-font" style={{ fontSize: "1rem", fontWeight: 800, color: rankColor, width: "28px", textAlign: "center" }}>
-                                                #{idx + 1}
-                                            </span>
-
-                                            {renderAvatar(ath.avatarUrl, ath.avatarIcon, 36)}
-
-                                            <div>
-                                                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                                                    <span style={{ fontWeight: 700, fontSize: "0.95rem", color: isMe ? "#FFF" : "#EDEDED" }}>
-                                                        {ath.displayName}
-                                                    </span>
-                                                    {isMe && <span style={{ fontSize: "0.65rem", color: "#E2A73B", fontWeight: 700 }}>(YOU)</span>}
-                                                    {ath.isMasked && (
-                                                        <span className="pill-badge pill-slate" style={{ fontSize: "0.6rem", color: "#A78BFA", border: "1px solid rgba(167, 139, 250, 0.4)" }}>
-                                                            👻 GHOST {isAdmin && !isMe ? "(ADMIN EYE)" : ""}
-                                                        </span>
-                                                    )}
-                                                </div>
-
-                                                <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "2px", flexWrap: "wrap" }}>
-                                                    {isUnverified ? (
-                                                        <span className="pill-badge pill-slate" style={{ fontSize: "0.6rem", color: "#8A90A2", padding: "1px 5px" }}>
-                                                            UNVERIFIED (VAULT ONLY)
-                                                        </span>
-                                                    ) : (
-                                                        <span className="pill-badge pill-gold" style={{ fontSize: "0.6rem", padding: "1px 5px" }}>
-                                                            {ath.badge.title}
-                                                        </span>
-                                                    )}
-
-                                                    <span style={{ fontSize: "0.7rem", color: ath.verifiedCount > 0 ? "#10B981" : "#6C7282" }}>
-                                                        {ath.verifiedCount} certified
-                                                    </span>
-                                                    <span style={{ fontSize: "0.7rem", color: "#525666" }}>
-                                                        • {ath.totalFeats} logged • {ath.bw}kg
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                                            {!isMe && (
-                                                <button
-                                                    onClick={() => {
-                                                        const comparePbs = ath.rawPbs && ath.rawPbs.length > 0
-                                                            ? ath.rawPbs
-                                                            : allPbs.filter((p) => (p.email || "").toLowerCase() === (ath.email || "").toLowerCase());
-                                                        setCompareTarget({ displayName: ath.displayName, pbs: comparePbs, bw: ath.bw });
-                                                    }}
-                                                    style={{
-                                                        background: "rgba(255, 255, 255, 0.06)",
-                                                        border: "1px solid rgba(255, 255, 255, 0.12)",
-                                                        color: "#EDEDED",
-                                                        padding: "4px 10px",
-                                                        borderRadius: "4px",
-                                                        fontSize: "0.72rem",
-                                                        fontWeight: 700,
-                                                        cursor: "pointer",
-                                                    }}
-                                                >
-                                                    ⚔️ Compare
-                                                </button>
-                                            )}
-
-                                            <div style={{ textAlign: "right" }}>
-                                                <div className="num-font" style={{ fontSize: "1.4rem", fontWeight: 800, color: displayScore > 0 ? "#EDEDED" : "#525666", lineHeight: 1 }}>
-                                                    {displayScore}
-                                                </div>
-                                                <div style={{ fontSize: "0.62rem", fontWeight: 700, color: arenaSortBy === "vault" ? "#8A90A2" : "#E2A73B", letterSpacing: "0.05em", textTransform: "uppercase", marginTop: "3px" }}>
-                                                    {displayScoreLabel}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </section>
-                );
-            })()}
-
-            {/* 7. TAB 4: ADMIN TERMINAL */}
-            {activeTab === "admin" && isAdmin && (
-                <section className="titanium-slab" style={{ padding: "18px" }}>
-                    <div style={{ fontSize: "0.75rem", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: "#EF4444", marginBottom: "14px" }}>
-                        Verification Audit Queue
-                    </div>
-                    {adminPbs.filter((p) => p.verification_status === "pending").length === 0 ? (
-                        <div style={{ fontSize: "0.85rem", color: "#525666" }}>Audit queue is empty. All submissions verified.</div>
-                    ) : (
-                        adminPbs
-                            .filter((p) => p.verification_status === "pending")
-                            .map((p) => (
-                                <div
-                                    key={p.id}
-                                    style={{
-                                        border: "1px solid rgba(255, 255, 255, 0.08)",
-                                        borderRadius: "6px",
-                                        padding: "12px",
-                                        marginBottom: "10px",
-                                        background: "#0D0E13",
-                                        display: "flex",
-                                        justifyContent: "space-between",
-                                        alignItems: "center",
-                                    }}
-                                >
-                                    <div>
-                                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                            {renderAvatar(p.avatar_url, p.avatar_icon, 24)}
-                                            <span style={{ fontWeight: 700, fontSize: "0.9rem", color: "#EDEDED" }}>
-                        {p.display_name || p.email} - {p.skill_id}
-                      </span>
-                                        </div>
-                                        <div className="num-font" style={{ fontSize: "0.8rem", color: "#7E8494", marginTop: "2px" }}>
-                                            {p.reps || p.duration} {p.duration ? "s" : "r"} @ +{p.weight}kg ballast
-                                        </div>
-                                        {p.proof_url && (
-                                            <button
-                                                onClick={() => setPreviewVideoUrl(p.proof_url || null)}
-                                                style={{
-                                                    background: "none",
-                                                    border: "none",
-                                                    padding: 0,
-                                                    fontSize: "0.75rem",
-                                                    color: "#E2A73B",
-                                                    textDecoration: "underline",
-                                                    cursor: "pointer",
-                                                    marginTop: "4px",
-                                                    display: "block",
-                                                }}
-                                            >
-                                                ▶ Watch Video Proof In-App
-                                            </button>
-                                        )}
-                                    </div>
-                                    <div style={{ display: "flex", gap: "8px" }}>
-                                        <button
-                                            onClick={async () => {
-                                                await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: true }) });
-                                                fetchAdminPbs();
-                                                fetchPbs();
-                                                fetchLeaderboard();
-                                            }}
-                                            className="btn-action"
-                                            style={{ background: "#10B981", color: "#000", border: "none" }}
-                                        >
-                                            Approve
-                                        </button>
-                                        <button
-                                            onClick={async () => {
-                                                await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: false, reason: "Form Breakdown" }) });
-                                                fetchAdminPbs();
-                                                fetchPbs();
-                                                fetchLeaderboard();
-                                            }}
-                                            className="btn-action"
-                                            style={{ background: "#EF4444", color: "#FFF", border: "none" }}
-                                        >
-                                            Reject
-                                        </button>
-                                    </div>
-                                </div>
-                            ))
-                    )}
-                </section>
-            )}
-
-            {/* 8. MODAL: HEAD-TO-HEAD ARENA COMPARISON */}
-            {compareTarget && compareDiagnostics && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 130 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "480px", padding: "24px" }}>
-                        <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED", display: "flex", justifyContent: "space-between" }}>
-                            <span>⚔️ Head-to-Head Vector Clash</span>
-                            <button onClick={() => setCompareTarget(null)} style={{ background: "none", border: "none", color: "#6C7282", cursor: "pointer" }}>✕</button>
-                        </h3>
-
-                        <div style={{ display: "flex", justifyContent: "space-around", marginBottom: "16px" }}>
-                            <div style={{ textAlign: "center" }}>
-                                <span style={{ fontSize: "0.8rem", color: "#E2A73B", fontWeight: 700 }}>YOU ({officialELO} ELO)</span>
-                            </div>
-                            <span style={{ color: "#6C7282", fontWeight: 800 }}>VS</span>
-                            <div style={{ textAlign: "center" }}>
-                <span style={{ fontSize: "0.8rem", color: "#38BDF8", fontWeight: 700 }}>
-                  {compareTarget.displayName.toUpperCase()} ({computeDualELO(compareTarget.pbs, compareTarget.bw).officialELO} ELO)
-                </span>
-                            </div>
-                        </div>
-
-                        {/* Overlaid Vector Web */}
-                        <div style={{ display: "flex", justifyContent: "center", marginBottom: "16px" }}>
-                            <svg width="240" height="240" viewBox="0 0 200 200">
-                                {[0.25, 0.5, 0.75, 1.0].map((level, idx) => (
-                                    <circle key={idx} cx="100" cy="100" r={70 * level} fill="none" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
-                                ))}
-                                {diagnostics.radarAxes.map((_, i) => {
-                                    const angle = ((Math.PI * 2) / diagnostics.radarAxes.length) * i - Math.PI / 2;
-                                    const x2 = 100 + 70 * Math.cos(angle);
-                                    const y2 = 100 + 70 * Math.sin(angle);
-                                    return <line key={i} x1="100" y1="100" x2={x2} y2={y2} stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />;
-                                })}
-                                {/* User Polygon (Gold) */}
-                                <polygon points={radarPoints} fill="rgba(226, 167, 59, 0.25)" stroke="#E2A73B" strokeWidth="2" />
-                                {/* Opponent Polygon (Cyan) */}
-                                <polygon points={getRadarPoints(compareDiagnostics.radarAxes)} fill="rgba(56, 189, 248, 0.25)" stroke="#38BDF8" strokeWidth="2" />
-                            </svg>
-                        </div>
-
-                        <button onClick={() => setCompareTarget(null)} className="btn-primary" style={{ width: "100%", padding: "10px" }}>
-                            Close Comparison
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* 9. MODAL: IN-APP VIDEO PROOF PLAYER */}
-            {previewVideoUrl && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 140 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "560px", padding: "20px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                            <span style={{ fontSize: "0.85rem", fontWeight: 700, color: "#E2A73B" }}>CERTIFIED PROOF PLAYBACK</span>
-                            <button onClick={() => setPreviewVideoUrl(null)} style={{ background: "none", border: "none", color: "#EDEDED", cursor: "pointer", fontSize: "1.1rem" }}>✕</button>
-                        </div>
-
-                        {getYouTubeEmbedUrl(previewVideoUrl) ? (
-                            <div style={{ position: "relative", paddingBottom: "56.25%", height: 0, overflow: "hidden", borderRadius: "8px" }}>
-                                <iframe
-                                    src={getYouTubeEmbedUrl(previewVideoUrl)!}
-                                    title="Proof Video"
-                                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                    allowFullScreen
-                                />
-                            </div>
-                        ) : (
-                            <div style={{ padding: "30px 20px", textAlign: "center", background: "#0E1015", borderRadius: "8px" }}>
-                                <p style={{ fontSize: "0.85rem", color: "#8A90A2", marginBottom: "12px" }}>External Video / Drive Link</p>
-                                <a href={previewVideoUrl} target="_blank" rel="noreferrer" className="btn-primary" style={{ display: "inline-block", padding: "8px 16px" }}>
-                                    Open Proof in New Tab ↗
-                                </a>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* 10. MODAL: EXPORTABLE HD FIGHTER CARD */}
-            {showFighterCard && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 110 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "340px", padding: "20px", textAlign: "center" }}>
-                        {/* Downloadable Wrapper Box */}
-                        <div id="fighter-card-export" style={{ background: "#0A0B0E", padding: "20px", borderRadius: "10px", border: "1px solid rgba(226, 167, 59, 0.4)" }}>
-                            <span style={{ fontSize: "0.65rem", fontWeight: 700, color: "#E2A73B", letterSpacing: "0.1em" }}>CERTIFIED ATHLETE PASSPORT</span>
-
-                            <div style={{ display: "flex", justifyContent: "center", margin: "14px 0 6px 0" }}>
-                                {renderAvatar(profile.avatar_url, profile.avatar_icon, 72)}
-                            </div>
-
-                            <h2 style={{ fontSize: "1.3rem", fontWeight: 800, color: "#EDEDED", margin: 0 }}>{profile.display_name}</h2>
-                            <div style={{ fontSize: "0.75rem", color: "#8A90A2", marginBottom: "14px" }}>
-                                {athleteBw}kg · {profile.discipline}
-                            </div>
-
-                            <div style={{ display: "flex", justifyContent: "center", gap: "20px", background: "rgba(0,0,0,0.3)", padding: "12px", borderRadius: "8px", marginBottom: "16px" }}>
-                                <div>
-                                    <div style={{ fontSize: "0.6rem", color: "#E2A73B", fontWeight: 700 }}>OFFICIAL ELO</div>
-                                    <div className="num-font" style={{ fontSize: "1.8rem", fontWeight: 800, color: "#FFF" }}>{officialELO}</div>
-                                </div>
-                                <div style={{ borderLeft: "1px solid rgba(255,255,255,0.1)", paddingLeft: "16px" }}>
-                                    <div style={{ fontSize: "0.6rem", color: "#6C7282", fontWeight: 700 }}>DIVISION</div>
-                                    <div style={{ fontSize: "1.1rem", fontWeight: 800, color: "#EDEDED", marginTop: "4px" }}>{badge.title}</div>
-                                </div>
-                            </div>
-
-                            <div style={{ textAlign: "left", marginBottom: "16px" }}>
-                                <div style={{ fontSize: "0.65rem", fontWeight: 700, color: "#6C7282", textTransform: "uppercase", marginBottom: "6px" }}>Signature Feats</div>
-                                {top3Feats.map((f, idx) => {
-                                    const meta = SKILLS.find((s) => s.id === f.skill_id);
-                                    const unit = meta?.type === "iso" ? "s" : "r";
-                                    return (
-                                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                                            <span style={{ color: "#EDEDED", fontWeight: 600 }}>{meta?.name}</span>
-                                            <span className="num-font" style={{ color: "#E2A73B", fontWeight: 700 }}>
-                        {f.reps || f.duration}{unit} {f.weight > 0 ? `(+${f.weight}kg)` : ""}
-                      </span>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-
-                            <div style={{ fontSize: "0.6rem", color: "#525666" }}>{profile.tagline || "CALLILOG VERIFIED // NO COMPROMISE"}</div>
-                        </div>
-
-                        {/* Actions */}
-                        <div style={{ display: "flex", gap: "8px", marginTop: "14px" }}>
-                            <button
-                                disabled={isExportingCard}
-                                onClick={async () => {
-                                    setIsExportingCard(true);
-                                    await exportFighterCardAsPng("fighter-card-export", profile.display_name || "athlete");
-                                    setIsExportingCard(false);
-                                }}
-                                className="btn-primary"
-                                style={{ flex: 1, padding: "10px", background: "#E2A73B", color: "#000" }}
-                            >
-                                {isExportingCard ? "Generating PNG..." : "📥 Save Card Image"}
-                            </button>
-                            <button onClick={() => setShowFighterCard(false)} className="btn-action" style={{ padding: "10px 14px" }}>
-                                Close
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* 11. MODAL: EDIT PROFILE */}
-            {showProfileModal && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 120 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "420px", padding: "24px" }}>
-                        <h3 style={{ fontSize: "1.15rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED" }}>Edit Athlete Identity</h3>
-                        <form onSubmit={handleSaveProfile} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                            <div style={{ display: "flex", alignItems: "center", gap: "14px", background: "rgba(0,0,0,0.3)", padding: "10px 14px", borderRadius: "8px" }}>
-                                {renderAvatar(editAvatarUrl, editIcon, 56)}
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontSize: "0.85rem", fontWeight: 700, color: "#EDEDED" }}>{editName || "Athlete"}</div>
-                                    <div style={{ fontSize: "0.72rem", color: "#7E8494" }}>{editAvatarUrl ? "Live Image Preview" : "Using Default Icon"}</div>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>PROFILE PICTURE URL</label>
-                                <input
-                                    type="url"
-                                    placeholder="https://..."
-                                    value={editAvatarUrl}
-                                    onChange={(e) => setEditAvatarUrl(e.target.value)}
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                />
-                            </div>
-
-                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
-                                <div>
-                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>DISPLAY NAME</label>
-                                    <input
-                                        type="text"
-                                        value={editName}
-                                        onChange={(e) => setEditName(e.target.value)}
-                                        required
-                                        style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                    />
-                                </div>
-                                <div>
-                                    <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>BODYWEIGHT (KG)</label>
-                                    <input
-                                        type="number"
-                                        step="0.5"
-                                        value={editBw}
-                                        onChange={(e) => setEditBw(Number(e.target.value))}
-                                        required
-                                        style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>DISCIPLINE SPECIALIZATION</label>
-                                <select
-                                    value={editDiscipline}
-                                    onChange={(e) => setEditDiscipline(e.target.value)}
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                >
-                                    <option value="Statics & Holds">Statics & Holds</option>
-                                    <option value="Weighted Calisthenics">Weighted Calisthenics</option>
-                                    <option value="Endurance Sets">Endurance Sets</option>
-                                    <option value="Still Rings Gymnastics">Still Rings Gymnastics</option>
-                                    <option value="Freestyle Dynamic">Freestyle Dynamic</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: "0.72rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>MANTRA / BIO TAGLINE</label>
-                                <input
-                                    type="text"
-                                    placeholder="e.g. Lever & planche practitioner"
-                                    value={editTagline}
-                                    onChange={(e) => setEditTagline(e.target.value)}
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                />
-                            </div>
-
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-                                <input type="checkbox" id="ghost_toggle" checked={editMasked} onChange={(e) => setEditMasked(e.target.checked)} />
-                                <label htmlFor="ghost_toggle" style={{ fontSize: "0.75rem", color: "#A78BFA", cursor: "pointer" }}>
-                                    👻 Ghost Mode (Hide from public Leaderboard)
-                                </label>
-                            </div>
-
-                            <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-                                <button type="button" onClick={() => setShowProfileModal(false)} className="btn-action" style={{ flex: 1, padding: "10px" }}>
-                                    Cancel
-                                </button>
-                                <button type="submit" className="btn-primary" style={{ flex: 1, padding: "10px" }}>
-                                    Save Profile
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* 12. MODAL: LOG/UPDATE BENCHMARK (WITH 1RM CALISTHENICS CALCULATOR) */}
-            {activeModalSkill && (
-                <div style={{ position: "fixed", inset: 0, background: "rgba(0, 0, 0, 0.8)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "16px", zIndex: 100 }}>
-                    <div className="titanium-slab" style={{ width: "100%", maxWidth: "380px", padding: "24px" }}>
-                        <h3 style={{ fontSize: "1.1rem", fontWeight: 700, margin: "0 0 16px 0", color: "#EDEDED" }}>
-                            Record: {activeModalSkill.name}
-                        </h3>
-                        <form onSubmit={handleSavePb} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
-                            <div>
-                                <label style={{ fontSize: "0.75rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    {activeModalSkill.type === "iso" ? "HOLD DURATION (SECONDS)" : "REPETITIONS"}
-                                </label>
-                                <input
-                                    type="number"
-                                    value={repsOrDur}
-                                    onChange={(e) => setRepsOrDur(Number(e.target.value))}
-                                    required
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                />
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: "0.75rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    ADDED BALLAST (+KG)
-                                </label>
-                                <input
-                                    type="number"
-                                    step="0.5"
-                                    value={ballast}
-                                    onChange={(e) => setBallast(Number(e.target.value))}
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                />
-                            </div>
-
-                            {/* Real-time Relative 1RM Load Feedback */}
-                            {live1RM && ballast > 0 && activeModalSkill.type === "dyn" && (
-                                <div style={{ background: "rgba(226, 167, 59, 0.08)", border: "1px solid rgba(226, 167, 59, 0.2)", padding: "10px 12px", borderRadius: "6px" }}>
-                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem" }}>
-                                        <span style={{ color: "#8A90A2" }}>Total System Mass:</span>
-                                        <span style={{ color: "#EDEDED", fontWeight: 700 }}>{live1RM.totalLoad} kg</span>
-                                    </div>
-                                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.75rem", marginTop: "4px" }}>
-                                        <span style={{ color: "#E2A73B", fontWeight: 700 }}>Estimated 1RM Ballast:</span>
-                                        <span style={{ color: "#E2A73B", fontWeight: 800 }}>+{live1RM.est1RM} kg</span>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div>
-                                <label style={{ fontSize: "0.75rem", fontWeight: 700, color: "#8A90A2", display: "block", marginBottom: "4px" }}>
-                                    PROOF URL (YOUTUBE / GOOGLE DRIVE)
-                                </label>
-                                <input
-                                    type="url"
-                                    placeholder="https://youtube.com/... or Google Drive"
-                                    value={proofUrl}
-                                    onChange={(e) => setProofUrl(e.target.value)}
-                                    style={{ width: "100%", background: "#08090C", border: "1px solid rgba(255, 255, 255, 0.12)", borderRadius: "6px", padding: "8px 12px", color: "#FFF", boxSizing: "border-box" }}
-                                />
-                            </div>
-
-                            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                                <input type="checkbox" id="is_public_cb" checked={isPublic} onChange={(e) => setIsPublic(e.target.checked)} />
-                                <label htmlFor="is_public_cb" style={{ fontSize: "0.75rem", color: "#8A90A2", cursor: "pointer" }}>
-                                    Public benchmark & proof
-                                </label>
-                            </div>
-
-                            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                                <button type="button" onClick={() => setActiveModalSkill(null)} className="btn-action" style={{ flex: 1, padding: "10px" }}>
-                                    Cancel
-                                </button>
-                                <button type="submit" className="btn-primary" style={{ flex: 1, padding: "10px" }}>
-                                    Save Benchmark
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-
-
-            {/* 13. NATIVE iOS FROSTED BOTTOM BAR */}
-            <div
-                style={{
-                    position: "fixed",
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    background: "rgba(10, 11, 14, 0.85)",
-                    backdropFilter: "blur(20px)",
-                    borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                    padding: "8px 16px max(8px, env(safe-area-inset-bottom))",
-                    display: "flex",
-                    justifyContent: "space-around",
-                    alignItems: "center",
-                    zIndex: 90,
-                }}
-            >
-                {[
-                    { id: "vault", icon: "🏛️", label: "Vault" },
-                    { id: "intel", icon: "🕸️", label: "Intel" },
-                    { id: "arena", icon: "🏆", label: "Arena" },
-                    { id: "admin", icon: "⚡", label: "Audit" },
-                ].map((item) => {
-                    const isActive = activeTab === item.id;
-                    return (
-                        <button
-                            key={item.id}
-                            onClick={() => setActiveTab(item.id as any)}
-                            style={{
-                                background: "none",
-                                border: "none",
-                                display: "flex",
-                                flexDirection: "column",
-                                alignItems: "center",
-                                gap: "2px",
-                                color: isActive ? "#E2A73B" : "#6C7282",
-                                cursor: "pointer",
-                                padding: "4px 12px",
-                            }}
-                        >
-                            <span style={{ fontSize: "1.15rem" }}>{item.icon}</span>
-                            <span style={{ fontSize: "0.68rem", fontWeight: isActive ? 800 : 600 }}>{item.label}</span>
-                        </button>
-                    );
-                })}
-            </div>
-        </main>
-    );
-}
+                    if (!
