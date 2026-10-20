@@ -88,7 +88,7 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [{ ping: 1 }] as unknown as T[];
   }
 
-  // 2. SELECT athletes by email
+  // 2. SELECT single athlete by email
   if (/SELECT.*FROM\s+athletes\s+WHERE.*email/i.test(norm)) {
     const email = String(values[0] || "").toLowerCase().trim();
     const athlete = storeInstance.athletes.find((a) => a.email.toLowerCase() === email);
@@ -150,7 +150,7 @@ function executeMockQuery<T = Record<string, unknown>>(
 
   // 5. UPDATE athletes
   if (/UPDATE\s+athletes\s+SET/i.test(norm)) {
-    const email = String(values[values.length - 1] || "").toLowerCase().trim();
+    const email = String(values[values.length - 1] || values[0] || "").toLowerCase().trim();
     const athlete = storeInstance.athletes.find((a) => a.email.toLowerCase() === email);
     if (athlete) {
       if (/display_name\s*=/i.test(norm)) {
@@ -226,7 +226,7 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [{ id: newPb.id }] as unknown as T[];
   }
 
-  // 8. UPDATE pbs (verify/reject)
+  // 8. UPDATE pbs (audit verify/reject)
   if (/UPDATE\s+pbs\s+SET/i.test(norm)) {
     const approved = Boolean(values[0]);
     const status = String(values[1] || (approved ? "verified" : "rejected"));
@@ -314,7 +314,7 @@ async function initPostgresTables(client: any) {
     `;
     initializedTables = true;
   } catch (err) {
-    console.error("[Database] Table initialization error:", err);
+    console.error("[Database] Table initialization notice:", err);
   }
 }
 
