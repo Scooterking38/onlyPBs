@@ -37,41 +37,29 @@ interface DataStore {
   pbs: PBRow[];
 }
 
-const DISK_FILE = path.join("/tmp", "callilog_db.json");
-const LOCAL_BACKUP_FILE = path.join(process.cwd(), "callilog_db.json");
-
-const ADMIN_NAMES_MAP: Record<string, string> = {
-  "mrwe3838@gmail.com": "Admin 1",
-  "elijaharagonmorgan@gmail.com": "Admin 2",
-  "station3828@gmail.com": "Admin 3",
-  "2morgane@queenelizabeths.derbyshire.sch.uk": "Admin 4",
-};
+const LOCAL_FILE = path.join(process.cwd(), "callilog_db.json");
+const TMP_FILE = path.join("/tmp", "callilog_db.json");
 
 function loadStore(): DataStore {
   try {
-    const targetFile = fs.existsSync(LOCAL_BACKUP_FILE)
-      ? LOCAL_BACKUP_FILE
-      : fs.existsSync(DISK_FILE)
-      ? DISK_FILE
+    const file = fs.existsSync(LOCAL_FILE)
+      ? LOCAL_FILE
+      : fs.existsSync(TMP_FILE)
+      ? TMP_FILE
       : null;
 
-    if (targetFile) {
-      const content = fs.readFileSync(targetFile, "utf-8");
+    if (file) {
+      const content = fs.readFileSync(file, "utf-8");
       const parsed = JSON.parse(content) as DataStore;
       if (Array.isArray(parsed.athletes) && Array.isArray(parsed.pbs)) {
         return parsed;
       }
     }
   } catch (err) {
-    console.warn("[Database] Initializing fresh local store:", err);
+    console.warn("[Database] Could not read local file, creating fresh store:", err);
   }
 
-  const fresh: DataStore = {
-    athleteSeq: 0,
-    pbSeq: 0,
-    athletes: [],
-    pbs: [],
-  };
+  const fresh: DataStore = { athleteSeq: 0, pbSeq: 0, athletes: [], pbs: [] };
   saveStore(fresh);
   return fresh;
 }
@@ -79,14 +67,10 @@ function loadStore(): DataStore {
 function saveStore(store: DataStore): void {
   try {
     const payload = JSON.stringify(store, null, 2);
-    try {
-      fs.writeFileSync(LOCAL_BACKUP_FILE, payload, "utf-8");
-    } catch {}
-    try {
-      fs.writeFileSync(DISK_FILE, payload, "utf-8");
-    } catch {}
+    try { fs.writeFileSync(LOCAL_FILE, payload, "utf-8"); } catch {}
+    try { fs.writeFileSync(TMP_FILE, payload, "utf-8"); } catch {}
   } catch (err) {
-    console.warn("[Database] Could not persist store to disk:", err);
+    console.warn("[Database] Could not save store:", err);
   }
 }
 
@@ -99,14 +83,13 @@ function executeMockQuery<T = Record<string, unknown>>(
   storeInstance = loadStore();
   const norm = sqlText.trim().replace(/\s+/g, " ");
 
-  // Health check
+  // 1. Health checks
   if (/SELECT\s+1/i.test(norm) || /pg_advisory/i.test(norm)) {
     return [{ ping: 1 }] as unknown as T[];
   }
 
-  // 1. SELECT single athlete by email
-  if (/SELECT.*FROM\s+athletes\s+WHERE\s+LOWER\(email\)\s*=\s*LOWER\(\$1\)/i.test(norm) ||
-      /SELECT.*FROM\s+athletes\s+WHERE\s+email\s*=/i.test(norm)) {
+  // 2. SELECT athletes by email
+  if (/SELECT.*FROM\s+athletes\s+WHERE.*email/i.test(norm)) {
     const email = String(values[0] || "").toLowerCase().trim();
     const athlete = storeInstance.athletes.find((a) => a.email.toLowerCase() === email);
     if (/SELECT\s+id\s+FROM/i.test(norm)) {
@@ -115,46 +98,21 @@ function executeMockQuery<T = Record<string, unknown>>(
     return (athlete ? [athlete] : []) as unknown as T[];
   }
 
-  // 2. SELECT all athletes
+  // 3. SELECT all athletes
   if (/SELECT.*FROM\s+athletes/i.test(norm)) {
     return [...storeInstance.athletes] as unknown as T[];
   }
 
-  // 3. UPSERT / INSERT / UPDATE athletes
+  // 4. INSERT athletes
   if (/INSERT\s+INTO\s+athletes/i.test(norm)) {
-    // Collect params regardless of position
-    let email = "";
-    let displayName = "";
-    let bw = 75.0;
-    let tagline = "Gravity is just a suggestion.";
-    let discipline = "Statics & Holds";
-    let avatarIcon = "⚡";
-    let avatarUrl = "";
-    let isMasked = false;
-
-    for (const v of values) {
-      if (typeof v === "string") {
-        if (v.includes("@")) email = v.toLowerCase().trim();
-        else if (v.startsWith("http")) avatarUrl = v.trim();
-        else if (["Statics & Holds", "Weighted Calisthenics", "Endurance Sets", "Still Rings Gymnastics", "Freestyle Dynamic"].includes(v)) {
-          discipline = v;
-        } else if (v.length <= 4) {
-          avatarIcon = v;
-        } else if (!displayName) {
-          displayName = v;
-        } else if (!tagline) {
-          tagline = v;
-        }
-      } else if (typeof v === "number") {
-        if (v >= 30 && v <= 250) bw = v;
-      } else if (typeof v === "boolean") {
-        isMasked = v;
-      }
-    }
-
-    if (!displayName && email) {
-      displayName = ADMIN_NAMES_MAP[email] || email.split("@")[0];
-    }
+    const email = String(values[0] || "").toLowerCase().trim();
+    const displayName = String(values[1] || email.split("@")[0]);
+    const bw = Number(values[2]) || 75.0;
+    const tagline = String(values[3] || "");
+    const discipline = String(values[4] || "Statics & Holds");
+    const avatarIcon = String(values[5] || "⚡");
+    const avatarUrl = String(values[6] || "").trim();
+    const isMasked = Boolean(values[7]);
 
     const idx = storeInstance.athletes.findIndex((a) => a.email.toLowerCase() === email);
     let saved: AthleteRow;
@@ -162,12 +120,12 @@ function executeMockQuery<T = Record<string, unknown>>(
     if (idx >= 0) {
       storeInstance.athletes[idx] = {
         ...storeInstance.athletes[idx],
-        display_name: displayName || storeInstance.athletes[idx].display_name,
-        bodyweight_kg: bw || storeInstance.athletes[idx].bodyweight_kg,
-        tagline: tagline || storeInstance.athletes[idx].tagline,
-        discipline: discipline || storeInstance.athletes[idx].discipline,
-        avatar_icon: avatarIcon || storeInstance.athletes[idx].avatar_icon,
-        avatar_url: avatarUrl !== undefined ? avatarUrl : storeInstance.athletes[idx].avatar_url,
+        display_name: displayName,
+        bodyweight_kg: bw,
+        tagline,
+        discipline,
+        avatar_icon: avatarIcon,
+        avatar_url: avatarUrl,
         is_masked: isMasked,
       };
       saved = storeInstance.athletes[idx];
@@ -190,17 +148,21 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [saved] as unknown as T[];
   }
 
-  // 4. General UPDATE athletes
+  // 5. UPDATE athletes
   if (/UPDATE\s+athletes\s+SET/i.test(norm)) {
-    const emailVal = values.find((v) => typeof v === "string" && v.includes("@"));
-    const email = String(emailVal || "").toLowerCase().trim();
+    const email = String(values[values.length - 1] || "").toLowerCase().trim();
     const athlete = storeInstance.athletes.find((a) => a.email.toLowerCase() === email);
-
     if (athlete) {
-      for (const v of values) {
-        if (typeof v === "number" && v >= 30 && v <= 250) athlete.bodyweight_kg = v;
-        if (typeof v === "boolean") athlete.is_masked = v;
-        if (typeof v === "string" && v.startsWith("http")) athlete.avatar_url = v.trim();
+      if (/display_name\s*=/i.test(norm)) {
+        athlete.display_name = String(values[1] || athlete.display_name);
+        athlete.bodyweight_kg = Number(values[2]) || athlete.bodyweight_kg;
+        athlete.tagline = String(values[3] || athlete.tagline);
+        athlete.discipline = String(values[4] || athlete.discipline);
+        athlete.avatar_icon = String(values[5] || athlete.avatar_icon);
+        athlete.avatar_url = String(values[6] || "").trim();
+        athlete.is_masked = Boolean(values[7]);
+      } else if (/bodyweight_kg\s*=/i.test(norm)) {
+        athlete.bodyweight_kg = Number(values[0]) || athlete.bodyweight_kg;
       }
       saveStore(storeInstance);
       return [athlete] as unknown as T[];
@@ -208,37 +170,33 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [] as unknown as T[];
   }
 
-  // 5. INSERT INTO pbs
-  if (/INSERT\s+INTO\s+pbs/i.test(norm)) {
-    let email = "";
-    let skillId = "";
-    let bw = 75.0;
-    let weight = 0;
-    let reps = 0;
-    let duration = 0;
-    let proofUrl = "";
-    let isPublic = true;
-    let status = "unverified";
-
-    for (const v of values) {
-      if (typeof v === "string") {
-        if (v.includes("@")) email = v.toLowerCase().trim();
-        else if (v.startsWith("http")) {
-          proofUrl = v.trim();
-          status = "pending";
-        } else if (["verified", "pending", "unverified", "rejected"].includes(v)) {
-          status = v;
-        } else if (!skillId && v.length > 0) {
-          skillId = v;
-        }
-      } else if (typeof v === "number") {
-        if (v >= 40 && v <= 200 && bw === 75.0) bw = v;
-        else if (reps === 0 && duration === 0) reps = v;
-        else weight = v;
-      } else if (typeof v === "boolean") {
-        isPublic = v;
-      }
+  // 6. DELETE pbs
+  if (/DELETE\s+FROM\s+pbs/i.test(norm)) {
+    if (/skill_id/i.test(norm)) {
+      const email = String(values[0] || "").toLowerCase().trim();
+      const skillId = String(values[1] || "");
+      storeInstance.pbs = storeInstance.pbs.filter(
+        (p) => !(p.email.toLowerCase() === email && p.skill_id === skillId)
+      );
+    } else if (/id\s*=/i.test(norm)) {
+      const id = Number(values[0]);
+      storeInstance.pbs = storeInstance.pbs.filter((p) => p.id !== id);
     }
+    saveStore(storeInstance);
+    return [] as unknown as T[];
+  }
+
+  // 7. INSERT pbs
+  if (/INSERT\s+INTO\s+pbs/i.test(norm)) {
+    const email = String(values[0] || "").toLowerCase().trim();
+    const skillId = String(values[1] || "");
+    const bw = Number(values[2]) || 75.0;
+    const weight = Number(values[3]) || 0;
+    const reps = Number(values[4]) || 0;
+    const duration = Number(values[5]) || 0;
+    const proofUrl = String(values[6] || "").trim();
+    const isPublic = values[7] !== false;
+    const status = String(values[8] || (proofUrl ? "pending" : "unverified"));
 
     storeInstance.pbs = storeInstance.pbs.filter(
       (p) => !(p.email.toLowerCase() === email && p.skill_id === skillId)
@@ -268,26 +226,32 @@ function executeMockQuery<T = Record<string, unknown>>(
     return [{ id: newPb.id }] as unknown as T[];
   }
 
-  // 6. UPDATE pbs
+  // 8. UPDATE pbs (verify/reject)
   if (/UPDATE\s+pbs\s+SET/i.test(norm)) {
     const approved = Boolean(values[0]);
-    const id = Number(values[values.length - 1]);
+    const status = String(values[1] || (approved ? "verified" : "rejected"));
+    const reason = String(values[2] || "");
+    const id = Number(values[3] || values[values.length - 1]);
+
     const pb = storeInstance.pbs.find((p) => p.id === id);
     if (pb) {
       pb.is_verified = approved;
-      pb.verification_status = approved ? "verified" : "rejected";
+      pb.verification_status = status;
+      pb.rejection_reason = reason;
       saveStore(storeInstance);
+      return [pb] as unknown as T[];
     }
     return [] as unknown as T[];
   }
 
-  // 7. SELECT pbs
+  // 9. SELECT pbs
   if (/SELECT.*FROM\s+pbs/i.test(norm)) {
-    const emailParam = values.find((v) => typeof v === "string" && v.includes("@"));
     let list = storeInstance.pbs;
 
-    if (emailParam) {
-      const email = String(emailParam).toLowerCase().trim();
+    if (/pending/i.test(norm)) {
+      list = list.filter((p) => p.verification_status === "pending");
+    } else if (/WHERE.*email/i.test(norm)) {
+      const email = String(values[0] || "").toLowerCase().trim();
       list = list.filter((p) => p.email.toLowerCase() === email);
     }
 
@@ -295,6 +259,7 @@ function executeMockQuery<T = Record<string, unknown>>(
       const ath = storeInstance.athletes.find((a) => a.email.toLowerCase() === p.email.toLowerCase());
       return {
         ...p,
+        athlete_id: ath?.id,
         display_name: ath?.display_name || p.email.split("@")[0],
         avatar_url: ath?.avatar_url || "",
         avatar_icon: ath?.avatar_icon || "⚡",
@@ -320,7 +285,7 @@ async function initPostgresTables(client: any) {
     await client`
       CREATE TABLE IF NOT EXISTS athletes (
         id SERIAL PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
+        email VARCHAR(255) NOT NULL,
         display_name VARCHAR(100) NOT NULL,
         bodyweight_kg NUMERIC(5,2) DEFAULT 75.0,
         tagline VARCHAR(255) DEFAULT '',
@@ -349,7 +314,7 @@ async function initPostgresTables(client: any) {
     `;
     initializedTables = true;
   } catch (err) {
-    console.warn("[Database] Could not verify/initialize Postgres tables:", err);
+    console.error("[Database] Table initialization error:", err);
   }
 }
 
@@ -375,7 +340,6 @@ export async function query<T = Record<string, unknown>>(
 ): Promise<T[]> {
   const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
-  // Normalise raw query string and values
   let rawSql = "";
   let finalValues = values;
 
@@ -402,7 +366,7 @@ export async function query<T = Record<string, unknown>>(
     }
     return (await client(strings, ...values)) as T[];
   } catch (error) {
-    console.warn("[Database] Postgres error, falling back to local store:", error);
+    console.error("[Database Postgres Error - falling back to local file]:", error);
     return executeMockQuery<T>(rawSql, finalValues);
   }
 }
