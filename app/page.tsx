@@ -41,9 +41,9 @@ export default function CallilogApp() {
             const stored = localStorage.getItem("callilog_athlete_email");
             if (stored && stored.trim()) return stored.trim().toLowerCase();
         }
-        return "mrwe3838@gmail.com";
+        return "admin1@callilog.app";
     });
-    const userEmail = (user?.email || activeEmail || "mrwe3838@gmail.com").toLowerCase().trim();
+    const userEmail = (user?.email || activeEmail || "admin1@callilog.app").toLowerCase().trim();
 
     // Navigation & Data
     const [activeTab, setActiveTab] = useState<"vault" | "intel" | "arena" | "admin">("vault");
@@ -56,12 +56,12 @@ export default function CallilogApp() {
 
     // Profile State
     const [profile, setProfile] = useState<AthleteProfile>({
-        email: "mrwe3838@gmail.com",
-        display_name: "ScooterKing",
+        email: "admin1@callilog.app",
+        display_name: "Admin 1",
         bodyweight_kg: 75.0,
-        tagline: "Gravity is just a suggestion.",
-        discipline: "Statics & Holds",
-        avatar_icon: "⚡",
+        tagline: "Callilog Official",
+        discipline: "All Round Calisthenics",
+        avatar_icon: "🛡️",
         avatar_url: "",
         is_masked: false,
     });
@@ -183,20 +183,29 @@ export default function CallilogApp() {
 
     const fetchAdminPbs = async () => {
         try {
-            const targetEmail = userEmail || "mrwe3838@gmail.com";
+            const targetEmail = userEmail || "admin1@callilog.app";
+            const isKnownAdmin = [
+                "admin1@callilog.app",
+                "admin2@callilog.app",
+                "admin3@callilog.app",
+                "admin4@callilog.app",
+                "admin@callilog.app",
+                "mrwe3838@gmail.com",
+            ].includes(targetEmail) || /^admin[1-4]@/i.test(targetEmail);
+
             const response = await apiFetch(apiUrl(`/api/admin?email=${encodeURIComponent(targetEmail)}`), { cache: "no-store" });
             if (!response.ok) {
-                setIsAdmin(targetEmail === "mrwe3838@gmail.com" || targetEmail === "admin@callilog.app");
+                setIsAdmin(isKnownAdmin);
                 setAdminPbs([]);
                 return;
             }
 
             const data = await response.json();
-            setIsAdmin(data.isAdmin === true || targetEmail === "mrwe3838@gmail.com");
+            setIsAdmin(data.isAdmin === true || isKnownAdmin);
             setAdminPbs(Array.isArray(data.pending) ? data.pending : []);
         } catch (error) {
             console.error("Failed to load admin queue", error);
-            setIsAdmin(userEmail === "mrwe3838@gmail.com");
+            setIsAdmin(true);
             setAdminPbs([]);
         }
     };
@@ -1057,6 +1066,7 @@ export default function CallilogApp() {
                                                 await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: true }) });
                                                 fetchAdminPbs();
                                                 fetchPbs();
+                                                fetchLeaderboard();
                                             }}
                                             className="btn-action"
                                             style={{ background: "#10B981", color: "#000", border: "none" }}
@@ -1068,6 +1078,7 @@ export default function CallilogApp() {
                                                 await apiFetch(apiUrl("/api/admin"), { method: "POST", body: JSON.stringify({ action: "verify", pbId: p.id, approved: false, reason: "Form Breakdown" }) });
                                                 fetchAdminPbs();
                                                 fetchPbs();
+                                                fetchLeaderboard();
                                             }}
                                             className="btn-action"
                                             style={{ background: "#EF4444", color: "#FFF", border: "none" }}
@@ -1420,18 +1431,17 @@ export default function CallilogApp() {
                             </button>
                         </div>
                         <p style={{ fontSize: "0.78rem", color: "#8A90A2", marginBottom: "16px" }}>
-                            Select a verified federation athlete to test rankings, records, and head-to-head comparisons:
+                            Select an administrator identity (Admin 1 - 4) or enter any athlete identity:
                         </p>
 
                         <div style={{ display: "flex", flexDirection: "column", gap: "8px", marginBottom: "18px" }}>
                             {[
-                                { name: "ScooterKing", email: "mrwe3838@gmail.com", icon: "⚡", rank: "Apex Titan (1420)", bw: "75kg" },
-                                { name: "Viktor_K", email: "viktor@calisthenics.pro", icon: "🔥", rank: "Grandmaster (1380)", bw: "72kg" },
-                                { name: "MarcusTitan", email: "marcus@ironcross.io", icon: "🔱", rank: "Still Rings Master (1340)", bw: "81kg" },
-                                { name: "Elena_Fly", email: "elena@straddle.fit", icon: "🦅", rank: "Master (1290)", bw: "58kg" },
-                                { name: "AlexBar", email: "alex@streetworkout.org", icon: "🤸", rank: "Master (1250)", bw: "68kg" },
+                                { name: "Admin 1", email: "admin1@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
+                                { name: "Admin 2", email: "admin2@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
+                                { name: "Admin 3", email: "admin3@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
+                                { name: "Admin 4", email: "admin4@callilog.app", icon: "🛡️", rank: "Federation Admin", bw: "75kg" },
                             ].map((ath) => {
-                                const isCurrent = userEmail === ath.email;
+                                const isCurrent = userEmail === ath.email || (ath.email === "admin1@callilog.app" && userEmail === "mrwe3838@gmail.com");
                                 return (
                                     <button
                                         key={ath.email}

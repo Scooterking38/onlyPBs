@@ -86,14 +86,16 @@ export async function getRequestUser(
 
   // Default fallback user if no specific email is provided
   if (!parsedEmail) {
-    parsedEmail = "mrwe3838@gmail.com";
+    parsedEmail = "admin1@callilog.app";
   }
+
+  const defaultDisplayName = getDefaultDisplayName(parsedEmail);
 
   return {
     uid: `user_${parsedEmail.replace(/[^a-zA-Z0-9]/g, "_")}`,
     email: parsedEmail,
     email_verified: true,
-    name: parsedEmail.split("@")[0],
+    name: defaultDisplayName,
     aud: "callilog",
     auth_time: Math.floor(Date.now() / 1000),
     exp: Math.floor(Date.now() / 1000) + 3600,
@@ -104,15 +106,49 @@ export async function getRequestUser(
   } as DecodedIdToken;
 }
 
+export const ADMIN_EMAILS = [
+  "admin1@callilog.app",
+  "admin2@callilog.app",
+  "admin3@callilog.app",
+  "admin4@callilog.app",
+  "admin@callilog.app",
+  "mrwe3838@gmail.com",
+];
+
 export function isAdminEmail(email: string | undefined): boolean {
   if (!email) return false;
+  const clean = email.trim().toLowerCase();
 
-  const defaultAdmins = ["mrwe3838@gmail.com", "admin@callilog.app"];
+  if (ADMIN_EMAILS.includes(clean)) return true;
+  if (/^admin[1-4]@/i.test(clean)) return true;
+
   const configured = (process.env.ADMIN_EMAILS || "")
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
 
-  const allowlist = [...defaultAdmins, ...configured];
-  return allowlist.includes(email.trim().toLowerCase());
+  return configured.includes(clean);
+}
+
+export function getDefaultDisplayName(email: string | undefined, fallbackName?: string): string {
+  if (!email) return "Admin 1";
+  const clean = email.trim().toLowerCase();
+
+  if (clean === "admin1@callilog.app" || clean === "mrwe3838@gmail.com" || clean === "admin@callilog.app") {
+    return "Admin 1";
+  }
+  if (clean === "admin2@callilog.app") return "Admin 2";
+  if (clean === "admin3@callilog.app") return "Admin 3";
+  if (clean === "admin4@callilog.app") return "Admin 4";
+  if (/^admin1@/i.test(clean)) return "Admin 1";
+  if (/^admin2@/i.test(clean)) return "Admin 2";
+  if (/^admin3@/i.test(clean)) return "Admin 3";
+  if (/^admin4@/i.test(clean)) return "Admin 4";
+
+  if (fallbackName && fallbackName.trim() && fallbackName !== "ScooterKing") {
+    return fallbackName.trim();
+  }
+
+  const handle = clean.split("@")[0];
+  return handle ? handle.charAt(0).toUpperCase() + handle.slice(1) : "Athlete";
 }

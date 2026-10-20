@@ -1,5 +1,5 @@
 import { getClient, transaction } from "@/lib/db";
-import { getRequestUser } from "@/lib/server-auth";
+import { getRequestUser, getDefaultDisplayName } from "@/lib/server-auth";
 import { apiJson, apiOptions } from "@/lib/http";
 import { SKILL_MAP } from "@/lib/skills";
 import { reconcileVerification } from "@/lib/verification";
@@ -104,12 +104,32 @@ export async function POST(request: Request) {
     const status = proofUrl ? "pending" : "unverified";
     const db = await getClient();
 
-    const athlete = await db`
+    let athlete = await db`
       SELECT id FROM athletes WHERE email = ${email}
     `;
 
     if (athlete.length === 0) {
-      return apiJson(request, { error: "Athlete profile not found" }, 404);
+      const defaultName = getDefaultDisplayName(email, user.name);
+      await db`
+        INSERT INTO athletes (
+          email, display_name, bodyweight_kg, tagline, discipline,
+          avatar_icon, avatar_url, is_masked
+        )
+        VALUES (
+          ${email},
+          ${defaultName},
+          ${bw},
+          'Callilog Official',
+          'Statics & Holds',
+          '🛡️',
+          ${user.picture || ""},
+          false
+        )
+        ON CONFLICT (email) DO NOTHING
+      `;
+      athlete = await db`
+        SELECT id FROM athletes WHERE email = ${email}
+      `;
     }
 
     // Keep replacement, bodyweight update, and reconciliation atomic in PostgreSQL.

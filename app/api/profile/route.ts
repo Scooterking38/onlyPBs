@@ -1,6 +1,6 @@
 import { query } from "@/lib/db";
 import { apiJson, apiOptions } from "@/lib/http";
-import { getRequestUser } from "@/lib/server-auth";
+import { getRequestUser, getDefaultDisplayName } from "@/lib/server-auth";
 
 export function OPTIONS(request: Request) {
   return apiOptions(request);
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     `;
 
     if (rows.length === 0) {
-      const defaultName = user.name || email.split("@")[0];
+      const defaultName = getDefaultDisplayName(email, user.name);
 
       await query`
         INSERT INTO athletes (
@@ -31,8 +31,8 @@ export async function GET(request: Request) {
           avatar_icon, avatar_url, is_masked
         )
         VALUES (
-          ${email}, ${defaultName}, 75.0, 'Gravity is just a suggestion.',
-          'Statics & Holds', '⚡', ${user.picture || ""}, false
+          ${email}, ${defaultName}, 75.0, 'Callilog Official',
+          'Statics & Holds', '🛡️', ${user.picture || ""}, false
         )
         ON CONFLICT (email) DO NOTHING
       `;
@@ -104,7 +104,7 @@ export async function POST(request: Request) {
       )
       VALUES (
         ${email},
-        ${displayName || user.name || email.split("@")[0]},
+        ${displayName || getDefaultDisplayName(email, user.name)},
         ${bodyweight},
         ${tagline},
         ${discipline || "Statics & Holds"},

@@ -42,7 +42,7 @@ export async function apiFetch(
     const storedEmail =
       localStorage.getItem("callilog_athlete_email") ||
       currentUser?.email ||
-      "mrwe3838@gmail.com";
+      "admin1@callilog.app";
     if (storedEmail) {
       headers.set("x-athlete-email", storedEmail);
     }

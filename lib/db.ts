@@ -2,7 +2,8 @@
 // Mega-Reliable Database Layer for Callilog:
 // 1. Resilient Postgres singleton pool (Neon / Supabase / Vercel Postgres)
 // 2. Persistent disk fallback (/tmp/callilog_db.json) so data is never lost across server restarts
-// 3. Full SQL support for athletes roster, leaderboard projections, profile updates, and PB audits
+// 3. Purged demo accounts - Admin accounts by default called Admin 1 through 4
+// 4. Full SQL support for athletes roster, leaderboard projections, profile updates, and PB audits
 
 import fs from "fs";
 import path from "path";
@@ -42,323 +43,125 @@ interface DataStore {
   pbs: PBRow[];
 }
 
-const SEED_ATHLETES: AthleteRow[] = [
+export const SEED_ATHLETES: AthleteRow[] = [
   {
     id: 1,
-    email: "mrwe3838@gmail.com",
-    display_name: "ScooterKing",
+    email: "admin1@callilog.app",
+    display_name: "Admin 1",
     bodyweight_kg: 75.0,
-    tagline: "Gravity is just a suggestion.",
-    discipline: "Statics & Holds",
-    avatar_icon: "⚡",
+    tagline: "Callilog Official",
+    discipline: "All Round Calisthenics",
+    avatar_icon: "🛡️",
     avatar_url: "",
     is_masked: false,
   },
   {
     id: 2,
-    email: "viktor@calisthenics.pro",
-    display_name: "Viktor_K",
-    bodyweight_kg: 72.0,
-    tagline: "Clean lockouts or zero reps.",
-    discipline: "Statics & Holds",
-    avatar_icon: "🔥",
+    email: "admin2@callilog.app",
+    display_name: "Admin 2",
+    bodyweight_kg: 75.0,
+    tagline: "Callilog Official",
+    discipline: "All Round Calisthenics",
+    avatar_icon: "🛡️",
     avatar_url: "",
     is_masked: false,
   },
   {
     id: 3,
-    email: "marcus@ironcross.io",
-    display_name: "MarcusTitan",
-    bodyweight_kg: 81.0,
-    tagline: "Rings are the absolute truth.",
-    discipline: "Still Rings Gymnastics",
-    avatar_icon: "🔱",
+    email: "admin3@callilog.app",
+    display_name: "Admin 3",
+    bodyweight_kg: 75.0,
+    tagline: "Callilog Official",
+    discipline: "All Round Calisthenics",
+    avatar_icon: "🛡️",
     avatar_url: "",
     is_masked: false,
   },
   {
     id: 4,
-    email: "elena@straddle.fit",
-    display_name: "Elena_Fly",
-    bodyweight_kg: 58.0,
-    tagline: "Front lever & planche practitioner.",
-    discipline: "Weighted Calisthenics",
-    avatar_icon: "🦅",
-    avatar_url: "",
-    is_masked: false,
-  },
-  {
-    id: 5,
-    email: "alex@streetworkout.org",
-    display_name: "AlexBar",
-    bodyweight_kg: 68.0,
-    tagline: "Tendon density over ego.",
-    discipline: "Statics & Holds",
-    avatar_icon: "🤸",
+    email: "admin4@callilog.app",
+    display_name: "Admin 4",
+    bodyweight_kg: 75.0,
+    tagline: "Callilog Official",
+    discipline: "All Round Calisthenics",
+    avatar_icon: "🛡️",
     avatar_url: "",
     is_masked: false,
   },
 ];
 
-const SEED_PBS: PBRow[] = [
-  // ScooterKing PBs
-  {
-    id: 1,
-    email: "mrwe3838@gmail.com",
-    skill_id: "pull_std",
-    bodyweight_at_time: 75.0,
-    weight: 0,
-    reps: 18,
-    duration: 0,
-    proof_url: "https://youtu.be/sample1",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-09-15",
-  },
-  {
-    id: 2,
-    email: "mrwe3838@gmail.com",
-    skill_id: "pull_c2b",
-    bodyweight_at_time: 75.0,
-    weight: 0,
-    reps: 8,
-    duration: 0,
-    proof_url: "https://youtu.be/sample2",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-09-20",
-  },
-  {
-    id: 3,
-    email: "mrwe3838@gmail.com",
-    skill_id: "push_dip",
-    bodyweight_at_time: 75.0,
-    weight: 0,
-    reps: 25,
-    duration: 0,
-    proof_url: "https://youtu.be/sample3",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-09-22",
-  },
-  {
-    id: 4,
-    email: "mrwe3838@gmail.com",
-    skill_id: "core_l_sit",
-    bodyweight_at_time: 75.0,
-    weight: 0,
-    reps: 0,
-    duration: 25,
-    proof_url: "https://youtu.be/sample4",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-09-25",
-  },
-  {
-    id: 5,
-    email: "mrwe3838@gmail.com",
-    skill_id: "pull_fl",
-    bodyweight_at_time: 75.0,
-    weight: 0,
-    reps: 0,
-    duration: 6,
-    proof_url: "https://youtu.be/sample_fl",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-10",
-  },
-
-  // Viktor PBs (Verified Federation Champions)
-  {
-    id: 6,
-    email: "viktor@calisthenics.pro",
-    skill_id: "pull_fl",
-    bodyweight_at_time: 72.0,
-    weight: 0,
-    reps: 0,
-    duration: 12,
-    proof_url: "https://youtu.be/viktor_fl",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-01",
-  },
-  {
-    id: 7,
-    email: "viktor@calisthenics.pro",
-    skill_id: "push_planche",
-    bodyweight_at_time: 72.0,
-    weight: 0,
-    reps: 0,
-    duration: 7,
-    proof_url: "https://youtu.be/viktor_pl",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-02",
-  },
-  {
-    id: 8,
-    email: "viktor@calisthenics.pro",
-    skill_id: "pull_std",
-    bodyweight_at_time: 72.0,
-    weight: 32,
-    reps: 5,
-    duration: 0,
-    proof_url: "https://youtu.be/viktor_wtpull",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-05",
-  },
-
-  // MarcusTitan PBs
-  {
-    id: 9,
-    email: "marcus@ironcross.io",
-    skill_id: "rings_iron_cross",
-    bodyweight_at_time: 81.0,
-    weight: 0,
-    reps: 0,
-    duration: 10,
-    proof_url: "https://youtu.be/marcus_cross",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-08",
-  },
-  {
-    id: 10,
-    email: "marcus@ironcross.io",
-    skill_id: "rings_maltese",
-    bodyweight_at_time: 81.0,
-    weight: 0,
-    reps: 0,
-    duration: 5,
-    proof_url: "https://youtu.be/marcus_maltese",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-11",
-  },
-  {
-    id: 11,
-    email: "marcus@ironcross.io",
-    skill_id: "pull_mu",
-    bodyweight_at_time: 81.0,
-    weight: 20,
-    reps: 5,
-    duration: 0,
-    proof_url: "https://youtu.be/marcus_mu",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-12",
-  },
-
-  // Elena_Fly PBs
-  {
-    id: 12,
-    email: "elena@straddle.fit",
-    skill_id: "pull_fl",
-    bodyweight_at_time: 58.0,
-    weight: 0,
-    reps: 0,
-    duration: 14,
-    proof_url: "https://youtu.be/elena_fl",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-10",
-  },
-  {
-    id: 13,
-    email: "elena@straddle.fit",
-    skill_id: "push_planche",
-    bodyweight_at_time: 58.0,
-    weight: 0,
-    reps: 0,
-    duration: 6,
-    proof_url: "https://youtu.be/elena_planche",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-13",
-  },
-  {
-    id: 14,
-    email: "elena@straddle.fit",
-    skill_id: "pull_oap",
-    bodyweight_at_time: 58.0,
-    weight: 0,
-    reps: 2,
-    duration: 0,
-    proof_url: "https://youtu.be/elena_oap",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-14",
-  },
-
-  // AlexBar PBs
-  {
-    id: 15,
-    email: "alex@streetworkout.org",
-    skill_id: "push_planche",
-    bodyweight_at_time: 68.0,
-    weight: 0,
-    reps: 0,
-    duration: 9,
-    proof_url: "https://youtu.be/alex_planche",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-15",
-  },
-  {
-    id: 16,
-    email: "alex@streetworkout.org",
-    skill_id: "core_manna",
-    bodyweight_at_time: 68.0,
-    weight: 0,
-    reps: 0,
-    duration: 4,
-    proof_url: "https://youtu.be/alex_manna",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-16",
-  },
-  {
-    id: 17,
-    email: "alex@streetworkout.org",
-    skill_id: "push_hspu",
-    bodyweight_at_time: 68.0,
-    weight: 0,
-    reps: 15,
-    duration: 0,
-    proof_url: "https://youtu.be/alex_hspu",
-    is_public_proof: true,
-    is_verified: true,
-    verification_status: "verified",
-    date: "2026-10-17",
-  },
-];
+// No fake demo PBs - only real user / verified submissions
+export const SEED_PBS: PBRow[] = [];
 
 const DISK_FILE = path.join("/tmp", "callilog_db.json");
+const LOCAL_BACKUP_FILE = path.join(process.cwd(), "callilog_db.json");
+
+const FORBIDDEN_DEMO_EMAILS = [
+  "viktor@calisthenics.pro",
+  "marcus@ironcross.io",
+  "elena@straddle.fit",
+  "alex@streetworkout.org",
+];
+
+function sanitizeStore(store: DataStore): DataStore {
+  // 1. Remove all old demo accounts and their PBs
+  store.athletes = store.athletes.filter(
+    (a) => !FORBIDDEN_DEMO_EMAILS.includes(a.email.toLowerCase())
+  );
+  store.pbs = store.pbs.filter(
+    (p) => !FORBIDDEN_DEMO_EMAILS.includes(p.email.toLowerCase())
+  );
+
+  // 2. Ensure Admin accounts are named Admin 1 through 4
+  for (const ath of store.athletes) {
+    const em = ath.email.toLowerCase().trim();
+    if (em === "admin1@callilog.app" || em === "mrwe3838@gmail.com") {
+      if (ath.display_name === "ScooterKing" || !ath.display_name) {
+        ath.display_name = "Admin 1";
+      }
+    } else if (em === "admin2@callilog.app") {
+      ath.display_name = "Admin 2";
+    } else if (em === "admin3@callilog.app") {
+      ath.display_name = "Admin 3";
+    } else if (em === "admin4@callilog.app") {
+      ath.display_name = "Admin 4";
+    }
+  }
+
+  // 3. Ensure Admin 1 through 4 exist in the athlete roster
+  const existingEmails = new Set(store.athletes.map((a) => a.email.toLowerCase()));
+  for (const seed of SEED_ATHLETES) {
+    if (!existingEmails.has(seed.email.toLowerCase())) {
+      store.athletes.push({ ...seed, id: ++store.athleteSeq });
+    }
+  }
+
+  // Deduplicate: if admin1@callilog.app is present and mrwe3838 has no PBs, remove mrwe3838 duplicate
+  if (store.athletes.some((a) => a.email.toLowerCase() === "admin1@callilog.app")) {
+    const hasPbs = store.pbs.some((p) => p.email.toLowerCase() === "mrwe3838@gmail.com");
+    if (!hasPbs) {
+      store.athletes = store.athletes.filter((a) => a.email.toLowerCase() !== "mrwe3838@gmail.com");
+    }
+  }
+
+  return store;
+}
 
 function loadStore(): DataStore {
   try {
-    if (fs.existsSync(DISK_FILE)) {
-      const content = fs.readFileSync(DISK_FILE, "utf-8");
+    const targetFile = fs.existsSync(DISK_FILE)
+      ? DISK_FILE
+      : fs.existsSync(LOCAL_BACKUP_FILE)
+      ? LOCAL_BACKUP_FILE
+      : null;
+
+    if (targetFile) {
+      const content = fs.readFileSync(targetFile, "utf-8");
       const parsed = JSON.parse(content) as DataStore;
       if (Array.isArray(parsed.athletes) && Array.isArray(parsed.pbs)) {
-        return parsed;
+        const sanitized = sanitizeStore(parsed);
+        saveStore(sanitized);
+        return sanitized;
       }
     }
   } catch (err) {
@@ -366,8 +169,8 @@ function loadStore(): DataStore {
   }
 
   const fresh: DataStore = {
-    athleteSeq: 50,
-    pbSeq: 100,
+    athleteSeq: 10,
+    pbSeq: 10,
     athletes: [...SEED_ATHLETES],
     pbs: [...SEED_PBS],
   };
@@ -377,7 +180,13 @@ function loadStore(): DataStore {
 
 function saveStore(store: DataStore): void {
   try {
-    fs.writeFileSync(DISK_FILE, JSON.stringify(store, null, 2), "utf-8");
+    const payload = JSON.stringify(store, null, 2);
+    fs.writeFileSync(DISK_FILE, payload, "utf-8");
+    try {
+      fs.writeFileSync(LOCAL_BACKUP_FILE, payload, "utf-8");
+    } catch {
+      // Ignore local cwd write failure in read-only setups
+    }
   } catch (err) {
     console.warn("[Database] Could not persist store to disk:", err);
   }
@@ -432,7 +241,7 @@ function executeMockQuery<T = Record<string, unknown>>(
     const email = String(values[0] || "").toLowerCase().trim();
     const displayName = String(values[1] || email.split("@")[0]);
     const bodyweight = Number(values[2]) || 75.0;
-    const tagline = String(values[3] || "Gravity is just a suggestion.");
+    const tagline = String(values[3] || "Callilog Official");
     const discipline = String(values[4] || "Statics & Holds");
     const avatarIcon = String(values[5] || "⚡");
     const avatarUrl = String(values[6] || "");
@@ -551,7 +360,7 @@ function executeMockQuery<T = Record<string, unknown>>(
     const approved = Boolean(values[0]);
     const status = String(values[1] || (approved ? "verified" : "rejected"));
     const reason = String(values[2] || "");
-    const id = Number(values[3]);
+    const id = Number(values[values.length - 1]);
 
     const pb = storeInstance.pbs.find((p) => p.id === id);
     if (pb) {
@@ -565,7 +374,7 @@ function executeMockQuery<T = Record<string, unknown>>(
 
   // 11. DELETE FROM pbs WHERE id = ...
   if (/DELETE\s+FROM\s+pbs\s+WHERE\s+id\s*=/i.test(norm)) {
-    const id = Number(values[0]);
+    const id = Number(values[values.length - 1] ?? values[0]);
     storeInstance.pbs = storeInstance.pbs.filter((p) => p.id !== id);
     saveStore(storeInstance);
     return [] as unknown as T[];
@@ -589,13 +398,21 @@ function executeMockQuery<T = Record<string, unknown>>(
 
   // 13. Public / Global PBs query (with LEFT JOIN athletes or raw)
   if (/SELECT.*FROM\s+pbs/i.test(norm)) {
+    const isPendingOnly = /p\.verification_status\s*=\s*['"]?pending['"]?/i.test(norm) ||
+      /verification_status\s*=\s*['"]?pending['"]?/i.test(norm);
+
     const isPublicOnly =
       /p\.is_verified\s*=\s*true/i.test(norm) &&
       /p\.is_public_proof\s*=\s*true/i.test(norm);
 
-    const sourceList = isPublicOnly
-      ? storeInstance.pbs.filter((p) => Boolean(p.is_verified) && Boolean(p.is_public_proof))
-      : storeInstance.pbs;
+    let sourceList: PBRow[];
+    if (isPendingOnly) {
+      sourceList = storeInstance.pbs.filter((p) => p.verification_status === "pending");
+    } else if (isPublicOnly) {
+      sourceList = storeInstance.pbs.filter((p) => Boolean(p.is_verified) && Boolean(p.is_public_proof));
+    } else {
+      sourceList = storeInstance.pbs;
+    }
 
     const list = sourceList
       .map((p) => {
