@@ -267,7 +267,37 @@ function executeMockQuery<T = Record<string, unknown>>(
       };
     }) as unknown as T[];
   }
+  // 6. DELETE pbs
+  if (/DELETE\s+FROM\s+pbs/i.test(norm)) {
+    if (/skill_id/i.test(norm)) {
+      const email = String(values[0] || "").toLowerCase().trim();
+      const skillId = String(values[1] || "");
+      storeInstance.pbs = storeInstance.pbs.filter(
+        (p) => !(p.email.toLowerCase() === email && p.skill_id === skillId)
+      );
+    } else if (/email/i.test(norm)) {
+      // Deletes ALL pbs belonging to an email
+      const email = String(values[0] || "").toLowerCase().trim();
+      storeInstance.pbs = storeInstance.pbs.filter(
+        (p) => p.email.toLowerCase() !== email
+      );
+    } else if (/id\s*=/i.test(norm)) {
+      const id = Number(values[0]);
+      storeInstance.pbs = storeInstance.pbs.filter((p) => p.id !== id);
+    }
+    saveStore(storeInstance);
+    return [] as unknown as T[];
+  }
 
+  // 6.5 DELETE athletes (Account removal)
+  if (/DELETE\s+FROM\s+athletes/i.test(norm)) {
+    const email = String(values[0] || "").toLowerCase().trim();
+    storeInstance.athletes = storeInstance.athletes.filter(
+      (a) => a.email.toLowerCase() !== email
+    );
+    saveStore(storeInstance);
+    return [] as unknown as T[];
+  }
   return [] as unknown as T[];
 }
 
