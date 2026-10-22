@@ -19,6 +19,9 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Callilog" },
   formatDetection: { telephone: false },
   manifest: "/manifest.json",
+  verification: {
+    google: "7Ad-MoKmYqne_8K0pnQDCh4fSEcVk5gWvOzLk7a4YTA",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
